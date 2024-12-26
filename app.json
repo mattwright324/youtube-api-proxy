@@ -1,0 +1,8 @@
+{
+  "name": "YouTube API Proxy",
+  "description": "Proxy for the YouTube API for additional rate limiting and keeping your key secret",
+  "repository": "https://github.com/mattwright324/youtube-api-proxy",
+  "keywords": [
+    "node"
+  ]
+}
