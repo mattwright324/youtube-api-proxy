@@ -122,16 +122,16 @@ app.get('/v3/*', async (req, res) => {
                 delete req.query[param];
             }
         }
+        const CACHE_KEY = REQUEST_PATH + "?" + new URLSearchParams(req.query).toString()
         const REQUEST_PARAMS = Object.assign(req.query, {key: process.env.API_V3_KEY, quotaUser: req.ip})
         const REQUEST_URL = "https://www.googleapis.com/youtube/v3/" + REQUEST_PATH + "?" + new URLSearchParams(REQUEST_PARAMS).toString()
 
-        let cached = requestCache.get(REQUEST_URL);
+        let cached = requestCache.get(CACHE_KEY);
         if (cached) {
-            console.log("Cached", REQUEST_URL)
+            console.log("Cached", CACHE_KEY)
             return res.status(cached.status).send(cached.json)
         }
-
-        console.log("Request", REQUEST_URL)
+        console.log("Request", CACHE_KEY)
 
         const response = await fetch(REQUEST_URL, {method: 'GET'});
         const resultJson = await response.json();
