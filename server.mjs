@@ -70,10 +70,9 @@ app.get('/v1/resolve_url', async (req, res) => {
         const CACHE_KEY = "/v1/resolve_url?url=" + channelUrl;
         let cached = requestCache.get(CACHE_KEY);
         if (cached) {
-            console.log("Cached", CACHE_KEY)
+            console.log("Cached", cached.status, CACHE_KEY)
             return res.status(cached.status).send(cached.json)
         }
-        console.log("Request", CACHE_KEY)
 
         const response = await fetch("https://youtubei.googleapis.com/youtubei/v1/navigation/resolve_url?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8", {
             method: 'POST',
@@ -96,6 +95,8 @@ app.get('/v1/resolve_url', async (req, res) => {
         const isVanityUrl = responseJson?.endpoint?.commandMetadata?.resolveUrlCommandMetadata?.isVanityUrl;
         const channelId = responseJson?.endpoint?.browseEndpoint?.browseId
         const resultJson = {isVanityUrl: isVanityUrl, channelId: channelId};
+
+        console.log("Request", response.status, CACHE_KEY)
 
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson);
@@ -127,13 +128,15 @@ app.get('/v3/*', async (req, res) => {
 
         let cached = requestCache.get(CACHE_KEY);
         if (cached) {
-            console.log("Cached", CACHE_KEY)
+            console.log("Cached", cached.status, CACHE_KEY)
             return res.status(cached.status).send(cached.json)
         }
-        console.log("Request", CACHE_KEY)
 
         const response = await fetch(REQUEST_URL, {method: 'GET'});
         const resultJson = await response.json();
+
+        console.log("Request", response.status, CACHE_KEY)
+
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson)
     } catch (e) {
