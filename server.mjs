@@ -73,7 +73,6 @@ app.get('/v1/resolve_url', async (req, res) => {
             console.log("Cached", CACHE_KEY)
             return res.status(cached.status).send(cached.json)
         }
-
         console.log("Request", CACHE_KEY)
 
         const response = await fetch("https://youtubei.googleapis.com/youtubei/v1/navigation/resolve_url?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8", {
@@ -135,7 +134,7 @@ app.get('/v3/*', async (req, res) => {
 
         const response = await fetch(REQUEST_URL, {method: 'GET'});
         const resultJson = await response.json();
-        requestCache.set(REQUEST_URL, {status: response.status, json: resultJson});
+        requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson)
     } catch (e) {
         console.error(e)
