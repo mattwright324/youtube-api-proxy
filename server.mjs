@@ -64,6 +64,7 @@ app.get('/v1/resolve_url', async (req, res) => {
             }
         }
         if (!matched) {
+            console.log('Request 400 /v1/resolve_url?url=', channelUrl, 'did not match formats')
             return res.status(400).send({message: '"url" is not an expected vanity url format'})
         }
 
@@ -96,7 +97,9 @@ app.get('/v1/resolve_url', async (req, res) => {
         const channelId = responseJson?.endpoint?.browseEndpoint?.browseId
         const resultJson = {isVanityUrl: isVanityUrl, channelId: channelId};
 
-        console.log("Request", response.status, CACHE_KEY)
+        if (response.status !== 200) {
+            console.log("Request", response.status, CACHE_KEY)
+        }
 
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson);
@@ -115,6 +118,7 @@ app.get('/v3/*', async (req, res) => {
     try {
         const REQUEST_PATH = req.path.slice('/v3/'.length)
         if (!allowed.paths.includes(REQUEST_PATH)) {
+            console.log('Request 403 path', REQUEST_PATH, 'disallowed')
             return res.status(403).send({message: 'Request path disallowed'})
         }
         for (const param in req.query) {
@@ -135,7 +139,9 @@ app.get('/v3/*', async (req, res) => {
         const response = await fetch(REQUEST_URL, {method: 'GET'});
         const resultJson = await response.json();
 
-        console.log("Request", response.status, CACHE_KEY)
+        if (response.status !== 200) {
+            console.log("Request", response.status, CACHE_KEY)
+        }
 
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson)
