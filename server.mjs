@@ -104,7 +104,7 @@ app.get('/v1/resolve_url', async (req, res) => {
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson);
     } catch (e) {
-        console.error(e)
+        console.error("Error 500", req.originalUrl, e);
         res.status(500).send({message: 'A problem occurred'})
     }
 });
@@ -146,7 +146,7 @@ app.get('/v3/*', async (req, res) => {
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson)
     } catch (e) {
-        console.error(e)
+        console.error("Error 500", req.originalUrl, e);
         res.status(500).send({message: 'A problem occurred'})
     }
 });
