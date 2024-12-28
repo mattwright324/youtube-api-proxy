@@ -126,7 +126,7 @@ app.get('/v3/*', async (req, res) => {
                 delete req.query[param];
             }
         }
-        const CACHE_KEY = REQUEST_PATH + "?" + new URLSearchParams(req.query).toString()
+        const CACHE_KEY = REQUEST_PATH + "?" + new URLSearchParams(req.query).toString().replaceAll("%2C", ",")
         const REQUEST_PARAMS = Object.assign(req.query, {key: process.env.API_V3_KEY, quotaUser: req.ip})
         const REQUEST_URL = "https://www.googleapis.com/youtube/v3/" + REQUEST_PATH + "?" + new URLSearchParams(REQUEST_PARAMS).toString()
 
