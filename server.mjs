@@ -127,7 +127,13 @@ app.get('/v3/*', async (req, res) => {
             }
         }
         const CACHE_KEY = REQUEST_PATH + "?" + new URLSearchParams(req.query).toString().replaceAll("%2C", ",")
-        const REQUEST_PARAMS = Object.assign(req.query, {key: process.env.API_V3_KEY, quotaUser: req.ip})
+        // https://cloud.google.com/apis/docs/capping-api-usage details on quotaUser attribute
+        const QUOTA_USER = btoa(req.ip || 'unknown')
+        if (!req.ip) {
+            // This shouldn't happen but defaulting value just in case
+            console.log('User request "unknown"', req.originalUrl)
+        }
+        const REQUEST_PARAMS = Object.assign(req.query, {key: process.env.API_V3_KEY, quotaUser: QUOTA_USER})
         const REQUEST_URL = "https://www.googleapis.com/youtube/v3/" + REQUEST_PATH + "?" + new URLSearchParams(REQUEST_PARAMS).toString()
 
         let cached = requestCache.get(CACHE_KEY);
