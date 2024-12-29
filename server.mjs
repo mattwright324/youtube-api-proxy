@@ -10,7 +10,6 @@ import {dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const nodeBtoa = (b) => Buffer.from(b).toString('base64');
 
 import cors from 'cors';
 
@@ -78,7 +77,7 @@ function addDebugCount(apiMethod, cached) {
     }
 }
 
-setInterval(() => {console.log("Debug stats", debugStats)},60 * 1000)
+setInterval(() => {console.log("Debug stats", JSON.stringify(debugStats))},60 * 1000)
 
 const vanityRegexes = [
     // Vanity @
@@ -173,12 +172,11 @@ app.get('/v3/*', async (req, res) => {
         }
         const CACHE_KEY = REQUEST_PATH + "?" + new URLSearchParams(req.query).toString().replaceAll("%2C", ",")
         // https://cloud.google.com/apis/docs/capping-api-usage details on quotaUser attribute
-        const QUOTA_USER = nodeBtoa(req.ip || 'unknown')
         if (!req.ip) {
             // This shouldn't happen but defaulting value just in case
             console.log('User request "unknown"', req.originalUrl)
         }
-        const REQUEST_PARAMS = Object.assign(req.query, {key: process.env.API_V3_KEY, quotaUser: QUOTA_USER})
+        const REQUEST_PARAMS = Object.assign(req.query, {key: process.env.API_V3_KEY, quotaUser: req.ip || 'unknown'})
         const REQUEST_URL = "https://www.googleapis.com/youtube/v3/" + REQUEST_PATH + "?" + new URLSearchParams(REQUEST_PARAMS).toString()
 
         let cached = requestCache.get(CACHE_KEY);
