@@ -10,8 +10,10 @@ import {dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const nodeBtoa = (b) => Buffer.from(b).toString('base64');
 
 import cors from 'cors';
+
 app.use(cors({origin: process.env.CORS_WHITELIST.split(",")}));
 app.options('*', cors());
 app.set("trust proxy", 1);
@@ -37,6 +39,46 @@ const requestCache = new NodeCache({stdTTL: 300, checkperiod: 5})
 
 // import { Innertube } from "youtubei.js";
 // const innertube = await Innertube.create();
+
+// https://developers.google.com/youtube/v3/determine_quota_cost
+const quotaCosts = {
+    videos: 1,
+    channels: 1,
+    playlists: 1,
+    playlistItems: 1,
+    search: 100,
+}
+
+const debugStats = {
+    v3: {
+        apiCalls: 0,
+        apiQuotaUsed: 0,
+        cachedCalls: 0,
+        cacheQuotaSaved: 0,
+    },
+    v1: {
+        resolved: 0,
+        resolve_cached: 0,
+    }
+}
+
+function addDebugCount(apiMethod, cached) {
+    if (!quotaCosts[apiMethod]) {
+        console.warn(apiMethod, 'unsupported debug type')
+        return
+    }
+
+    const callCost = quotaCosts[apiMethod];
+    if (cached) {
+        debugStats.v3.cachedCalls += 1;
+        debugStats.v3.cacheQuotaSaved += callCost;
+    } else {
+        debugStats.v3.apiCalls += 1;
+        debugStats.v3.apiQuotaUsed += callCost;
+    }
+}
+
+setInterval(() => {console.log("Debug stats", debugStats)},60 * 1000)
 
 const vanityRegexes = [
     // Vanity @
@@ -71,7 +113,8 @@ app.get('/v1/resolve_url', async (req, res) => {
         const CACHE_KEY = "/v1/resolve_url?url=" + channelUrl;
         let cached = requestCache.get(CACHE_KEY);
         if (cached) {
-            console.log("Cached", cached.status, CACHE_KEY)
+            // console.log("Cached", cached.status, CACHE_KEY)
+            debugStats.v1.resolve_cached += 1;
             return res.status(cached.status).send(cached.json)
         }
 
@@ -98,8 +141,10 @@ app.get('/v1/resolve_url', async (req, res) => {
         const resultJson = {isVanityUrl: isVanityUrl, channelId: channelId};
 
         if (response.status !== 200) {
-            console.log("Request", response.status, CACHE_KEY)
+            console.log("Request failed", response.status, CACHE_KEY);
         }
+
+        debugStats.v1.resolved += 1;
 
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson);
@@ -128,7 +173,7 @@ app.get('/v3/*', async (req, res) => {
         }
         const CACHE_KEY = REQUEST_PATH + "?" + new URLSearchParams(req.query).toString().replaceAll("%2C", ",")
         // https://cloud.google.com/apis/docs/capping-api-usage details on quotaUser attribute
-        const QUOTA_USER = btoa(req.ip || 'unknown')
+        const QUOTA_USER = nodeBtoa(req.ip || 'unknown')
         if (!req.ip) {
             // This shouldn't happen but defaulting value just in case
             console.log('User request "unknown"', req.originalUrl)
@@ -138,7 +183,7 @@ app.get('/v3/*', async (req, res) => {
 
         let cached = requestCache.get(CACHE_KEY);
         if (cached) {
-            console.log("Cached", cached.status, CACHE_KEY)
+            addDebugCount(REQUEST_PATH, true);
             return res.status(cached.status).send(cached.json)
         }
 
@@ -146,8 +191,10 @@ app.get('/v3/*', async (req, res) => {
         const resultJson = await response.json();
 
         if (response.status !== 200) {
-            console.log("Request", response.status, CACHE_KEY)
+            console.log("Request failed", response.status, CACHE_KEY)
         }
+
+        addDebugCount(REQUEST_PATH, false)
 
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson)
