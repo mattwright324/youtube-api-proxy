@@ -17,35 +17,55 @@ app.use(cors({origin: process.env.CORS_WHITELIST.split(",")}));
 app.options('*', cors());
 app.set("trust proxy", 1);
 
+app.use(express.static('public'))
 app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
+    res.sendFile(__dirname + '/public/index.html');
 });
 
 import {rateLimit} from 'express-rate-limit';
 
 const limiter = rateLimit({
-    windowMs: Number(process.env.LIMIT_WINDOW_MS),
-    limit: Number(process.env.LIMIT_COUNT),
+    windowMs: Number(process.env.LIMIT_WINDOW_MS) || 60000,
+    limit: Number(process.env.LIMIT_COUNT) || 152,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
-    message: "Exceeded usage limit, try again in a few minutes"
+    message: "Exceeded usage limit, try again in a few minutes",
+    handler: (req, res, next, options) => {
+        if (req.rateLimit.used === req.rateLimit.limit + 1) {
+            console.log("WARN Rate-limited", req.ip)
+        }
+        res.status(options.statusCode).send(options.message);
+    }
 });
 app.use(limiter);
 
 import NodeCache from "node-cache";
 
-const requestCache = new NodeCache({stdTTL: 300, checkperiod: 5})
+const requestCache = new NodeCache({stdTTL: Number(process.env.CACHE_TTL_SEC) || 300, checkperiod: 5})
 
 // import { Innertube } from "youtubei.js";
 // const innertube = await Innertube.create();
 
 // https://developers.google.com/youtube/v3/determine_quota_cost
 const quotaCosts = {
-    videos: 1,
+    activities: 1,
+    captions: 50,
     channels: 1,
-    playlists: 1,
+    channelSections: 1,
+    comments: 1,
+    commentThreads: 1,
+    guideCategories: 1,
+    i18nLanguages: 1,
+    i18nRegions: 1,
+    members: 1,
+    membershipsLevels: 1,
     playlistItems: 1,
+    playlists: 1,
     search: 100,
+    subscriptions: 1,
+    videoAbuseReportReasons: 1,
+    videoCategories: 1,
+    videos: 1,
 }
 
 const debugStats = {
@@ -63,7 +83,7 @@ const debugStats = {
 
 function addDebugCount(apiMethod, cached) {
     if (!quotaCosts[apiMethod]) {
-        console.warn(apiMethod, 'unsupported debug type')
+        console.warn("WARN", apiMethod, 'unsupported debug type')
         return
     }
 
@@ -77,7 +97,9 @@ function addDebugCount(apiMethod, cached) {
     }
 }
 
-setInterval(() => {console.log("Debug stats", JSON.stringify(debugStats))},60 * 1000)
+setInterval(() => {
+    console.log("DEBUG Quota Stats", JSON.stringify(debugStats))
+},60 * 1000)
 
 const vanityRegexes = [
     // Vanity @
@@ -105,14 +127,13 @@ app.get('/v1/resolve_url', async (req, res) => {
             }
         }
         if (!matched) {
-            console.log('Request 400 /v1/resolve_url?url=', channelUrl, 'did not match formats')
+            console.log('WARN Request 400 /v1/resolve_url?url=', channelUrl, 'did not match formats')
             return res.status(400).send({message: '"url" is not an expected vanity url format'})
         }
 
         const CACHE_KEY = "/v1/resolve_url?url=" + channelUrl;
         let cached = requestCache.get(CACHE_KEY);
         if (cached) {
-            // console.log("Cached", cached.status, CACHE_KEY)
             debugStats.v1.resolve_cached += 1;
             return res.status(cached.status).send(cached.json)
         }
@@ -140,7 +161,7 @@ app.get('/v1/resolve_url', async (req, res) => {
         const resultJson = {isVanityUrl: isVanityUrl, channelId: channelId};
 
         if (response.status !== 200) {
-            console.log("Request failed", response.status, CACHE_KEY);
+            console.log("WARN Request failed", response.status, CACHE_KEY);
         }
 
         debugStats.v1.resolved += 1;
@@ -148,7 +169,7 @@ app.get('/v1/resolve_url', async (req, res) => {
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson);
     } catch (e) {
-        console.error("Error 500", req.originalUrl, e);
+        console.error("ERROR 500", req.originalUrl, e);
         res.status(500).send({message: 'A problem occurred'})
     }
 });
@@ -161,20 +182,26 @@ const allowed = {
 app.get('/v3/*', async (req, res) => {
     try {
         const REQUEST_PATH = req.path.slice('/v3/'.length)
-        if (!allowed.paths.includes(REQUEST_PATH)) {
-            console.log('Request 403 path', REQUEST_PATH, 'disallowed')
-            return res.status(403).send({message: 'Request path disallowed'})
-        }
-        for (const param in req.query) {
-            if (!allowed.params.includes(param)) {
-                delete req.query[param];
+        if (!allowed.paths.includes('*')) {
+            if (!allowed.paths.includes(REQUEST_PATH)) {
+                console.log('WARN Request 403 path', REQUEST_PATH, 'disallowed')
+                return res.status(403).send({message: 'Request path disallowed'})
             }
         }
+
+        if (!allowed.params.includes('*')) {
+            for (const param in req.query) {
+                if (!allowed.params.includes(param)) {
+                    delete req.query[param];
+                }
+            }
+        }
+
         const CACHE_KEY = REQUEST_PATH + "?" + new URLSearchParams(req.query).toString().replaceAll("%2C", ",")
         // https://cloud.google.com/apis/docs/capping-api-usage details on quotaUser attribute
         if (!req.ip) {
             // This shouldn't happen but defaulting value just in case
-            console.log('User request "unknown"', req.originalUrl)
+            console.log('WARN User request "unknown"', req.originalUrl)
         }
         const REQUEST_PARAMS = Object.assign(req.query, {key: process.env.API_V3_KEY, quotaUser: req.ip || 'unknown'})
         const REQUEST_URL = "https://www.googleapis.com/youtube/v3/" + REQUEST_PATH + "?" + new URLSearchParams(REQUEST_PARAMS).toString()
@@ -189,7 +216,7 @@ app.get('/v3/*', async (req, res) => {
         const resultJson = await response.json();
 
         if (response.status !== 200) {
-            console.log("Request failed", response.status, CACHE_KEY)
+            console.log("WARN Request failed", response.status, CACHE_KEY)
         }
 
         addDebugCount(REQUEST_PATH, false)
@@ -197,11 +224,11 @@ app.get('/v3/*', async (req, res) => {
         requestCache.set(CACHE_KEY, {status: response.status, json: resultJson});
         res.status(response.status).send(resultJson)
     } catch (e) {
-        console.error("Error 500", req.originalUrl, e);
+        console.error("ERROR 500", req.originalUrl, e);
         res.status(500).send({message: 'A problem occurred'})
     }
 });
 
 server.listen(process.env.PORT || 3000, () => {
-    console.log('listening on *:3000');
+    console.log('INFO Listening on *:3000');
 });

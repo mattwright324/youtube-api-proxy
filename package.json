@@ -1,8 +1,8 @@
 {
   "name": "youtube-api-proxy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "engines": {
-    "node": "18.x"
+    "node": "22.x"
   },
   "description": "",
   "main": "index.js",
@@ -10,15 +10,15 @@
     "start": "node -r dotenv/config server.mjs"
   },
   "type": "module",
-  "keywords": [],
-  "author": "",
+  "keywords": ["youtube", "youtube-api", "proxy"],
+  "author": "mattwright324",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.21.1",
+    "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "cors": "^2.8.5",
     "node-cache": "^5.1.2",
-    "dotenv": "^16.4.5",
-    "youtubei.js": "^12.2.0"
+    "dotenv": "^16.4.7",
+    "youtubei.js": "^13.0.0"
   }
 }
