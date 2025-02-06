@@ -216,7 +216,11 @@ app.get('/v3/*', async (req, res) => {
         const resultJson = await response.json();
 
         if (response.status !== 200) {
-            console.log("WARN Request failed", response.status, CACHE_KEY)
+            // https://developers.google.com/youtube/v3/docs/errors
+            const errorStatus = "status=" + (resultJson?.error?.status || "");
+            const errorDetail = "reason=" + (resultJson?.error?.errors?.[0]?.reason || "");
+
+            console.log("WARN Request failed", response.status, errorStatus, errorDetail, CACHE_KEY)
         }
 
         addDebugCount(REQUEST_PATH, false)
