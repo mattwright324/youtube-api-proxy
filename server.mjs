@@ -146,8 +146,8 @@ app.get('/v1/resolve_url', async (req, res) => {
             body: JSON.stringify({
                 context: {
                     client: {
-                        clientName: "ANDROID",
-                        clientVersion: "19.09.37",
+                        clientName: "WEB",
+                        clientVersion: "2.20250626.01.00",
                         hl: "en",
                     }
                 },
