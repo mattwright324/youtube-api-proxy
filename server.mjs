@@ -147,7 +147,7 @@ app.get('/v1/resolve_url', async (req, res) => {
                 context: {
                     client: {
                         clientName: "WEB",
-                        clientVersion: "2.20250626.01.00",
+                        clientVersion: "2.20260320.01.00",
                         hl: "en",
                     }
                 },
