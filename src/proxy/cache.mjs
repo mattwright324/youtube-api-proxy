@@ -37,6 +37,13 @@ export function createProxy({cacheTtlSec, limiter, stats, log = createLogger()})
         setTimeout(() => res.status(403).send(QUOTA_EXCEEDED), delay);
     }
 
+    /** Same response and pacing for a blocklisted request, without counting it as a request or a limit block. */
+    function sendDenied(res) {
+        res.locals.blocked = true;
+        const delay = stats.sampleLatency() ?? 100 + Math.random() * 150;
+        setTimeout(() => res.status(403).send(QUOTA_EXCEEDED), delay);
+    }
+
     function sendError(req, res, endpoint, e) {
         if (e?.name === 'TimeoutError') {
             log.warn('upstream timeout', {endpoint, url: req.originalUrl});
@@ -78,6 +85,7 @@ export function createProxy({cacheTtlSec, limiter, stats, log = createLogger()})
     return {
         cachedProxy,
         sendQuotaExceeded,
+        sendDenied,
         cacheStats: () => ({...requestCache.getStats(), ttlSec: cacheTtlSec}),
     };
 }

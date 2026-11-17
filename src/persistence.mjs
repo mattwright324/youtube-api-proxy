@@ -10,9 +10,17 @@ import {pacificDay} from './limits.mjs';
 import {HISTORY_FIELDS} from './stats.mjs';
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const MINUTE_COLUMNS = ['requests', 'served', 'blocked', 'scripted', 'cache_hits', 'upstream', 'units', 'search', 'errors'];
+const MINUTE_COLUMNS = ['requests', 'served', 'blocked', 'scripted', 'cache_hits', 'upstream', 'units', 'search', 'errors', 'denied'];
 const toColumn = field => field.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
 const HOUR_MS = 60 * 60 * 1000;
+
+const BLOCKLIST_COLUMNS = `id, kind, value, note, created_at, expires_at, hits_total, hits_today, hits_day::text AS hits_day, last_hit`;
+const blocklistRow = row => ({
+    id: Number(row.id), kind: row.kind, value: row.value, note: row.note,
+    createdAt: row.created_at.getTime(), expiresAt: row.expires_at ? row.expires_at.getTime() : null,
+    hitsTotal: Number(row.hits_total), hitsToday: Number(row.hits_today), hitsDay: row.hits_day,
+    lastHit: row.last_hit ? row.last_hit.getTime() : null,
+});
 
 /**
  * connection: {host, port, user, password, database}. schema: where the tables live (created if missing).
@@ -20,7 +28,7 @@ const HOUR_MS = 60 * 60 * 1000;
  */
 export function createPersistence({
     connection, schema = 'public', prefix = 'proxy_', intervalSec = 60, retentionDays = 30,
-    limiter, distinctTracker, stats, log = createLogger(),
+    limiter, distinctTracker, stats, blocklist = null, log = createLogger(),
 }) {
     if (!IDENTIFIER.test(schema)) throw new Error(`Invalid PG_SCHEMA "${schema}"`);
     if (!IDENTIFIER.test(prefix)) throw new Error(`Invalid table prefix "${prefix}"`);
@@ -33,7 +41,7 @@ export function createPersistence({
     let timer = null;
     let lastRetention = 0;
     // Changes from a failed save, retried with the next one
-    let retry = {usage: [], distinct: [], minutes: [], events: [], counters: []};
+    let retry = {usage: [], distinct: [], minutes: [], events: [], counters: [], blockHits: []};
 
     async function migrate() {
         await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
@@ -54,6 +62,13 @@ export function createPersistence({
             CREATE TABLE IF NOT EXISTS ${table('daily_counters')} (
                 day date NOT NULL, kind text NOT NULL, key text NOT NULL, value bigint NOT NULL,
                 PRIMARY KEY (day, kind, key));
+            CREATE TABLE IF NOT EXISTS ${table('blocklist')} (
+                id bigserial PRIMARY KEY, kind text NOT NULL CHECK (kind IN ('ip', 'block', 'asn')), value text NOT NULL,
+                note text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz,
+                hits_total bigint NOT NULL DEFAULT 0, hits_today bigint NOT NULL DEFAULT 0, hits_day date, last_hit timestamptz,
+                UNIQUE (kind, value));
+            -- Columns added after the first release
+            ALTER TABLE ${table('minutes')} ADD COLUMN IF NOT EXISTS denied bigint NOT NULL DEFAULT 0;
         `);
     }
 
@@ -68,6 +83,11 @@ export function createPersistence({
                         FROM ${table('events')} ORDER BY time DESC LIMIT 300`),
             pool.query(`SELECT day::text AS day, kind, key, value FROM ${table('daily_counters')} WHERE day = $1`, [today]),
         ]);
+        if (blocklist) {
+            const {rows} = await pool.query(`SELECT ${BLOCKLIST_COLUMNS} FROM ${table('blocklist')}
+                                             WHERE expires_at IS NULL OR expires_at > now()`);
+            blocklist.load(rows.map(blocklistRow));
+        }
         const restoredCounts = limiter.importCounts(usage.rows, now);
         const restoredLimited = distinctTracker?.importLimited(distinct.rows, now) ?? 0;
         const restoredStats = stats.importState({
@@ -82,7 +102,7 @@ export function createPersistence({
             })),
             counters: counters.rows,
         }, now);
-        return {usageCounts: restoredCounts, distinctLimited: restoredLimited, ...restoredStats};
+        return {usageCounts: restoredCounts, distinctLimited: restoredLimited, ...restoredStats, blocklist: blocklist?.size() ?? 0};
     }
 
     // Combines retried and new rows, keeping the latest row per key (a later export always has the larger value)
@@ -96,6 +116,7 @@ export function createPersistence({
             minutes: merge(retry.minutes, exported.minutes, r => r.t),
             events: [...retry.events, ...exported.events],
             counters: merge(retry.counters, exported.counters, r => `${r.day}|${r.kind}|${r.key}`),
+            blockHits: merge(retry.blockHits, blocklist?.exportHits() ?? [], r => r.id),
         };
         const started = Date.now();
         const client = await pool.connect().catch(error => {
@@ -147,8 +168,18 @@ export function createPersistence({
                     ON CONFLICT (day, kind, key) DO UPDATE SET value = GREATEST(c.value, EXCLUDED.value)`,
                 ['day', 'kind', 'key', 'value'].map(k => batch.counters.map(r => r[k])));
             }
+            if (batch.blockHits.length) {
+                // Entries removed since the hits were counted simply don't match any row
+                await client.query(`
+                    UPDATE ${table('blocklist')} AS b SET hits_total = GREATEST(b.hits_total, u.total),
+                        hits_today = CASE WHEN b.hits_day = u.day THEN GREATEST(b.hits_today, u.today) ELSE u.today END,
+                        hits_day = u.day, last_hit = GREATEST(b.last_hit, to_timestamp(u.last_ms / 1000.0))
+                    FROM unnest($1::bigint[], $2::bigint[], $3::bigint[], $4::date[], $5::bigint[]) AS u(id, total, today, day, last_ms)
+                    WHERE b.id = u.id`,
+                ['id', 'hitsTotal', 'hitsToday', 'hitsDay', 'lastHit'].map(k => batch.blockHits.map(r => r[k])));
+            }
             await client.query('COMMIT');
-            retry = {usage: [], distinct: [], minutes: [], events: [], counters: []};
+            retry = {usage: [], distinct: [], minutes: [], events: [], counters: [], blockHits: []};
             status.lastSave = new Date(now).toISOString();
             status.lastSaveMs = Date.now() - started;
             status.lastError = null;
@@ -157,7 +188,7 @@ export function createPersistence({
                 await deleteOld();
             }
             return {usage: batch.usage.length, distinct: batch.distinct.length, minutes: batch.minutes.length,
-                events: batch.events.length, counters: batch.counters.length};
+                events: batch.events.length, counters: batch.counters.length, blockHits: batch.blockHits.length};
         } catch (error) {
             await client.query('ROLLBACK').catch(() => {});
             retry = batch;
@@ -179,6 +210,11 @@ export function createPersistence({
                  + (SELECT count(*) FROM d) + (SELECT count(*) FROM e) AS deleted`, [days]);
         const deleted = Number(result.rows[0].deleted);
         if (deleted) log.info('postgres old rows deleted', {rows: deleted, retentionDays: days});
+        if (blocklist) {
+            const expired = await pool.query(`DELETE FROM ${table('blocklist')} WHERE expires_at <= now() RETURNING kind, value`);
+            blocklist.pruneExpired();
+            for (const row of expired.rows) log.info('blocklist entry expired', {kind: row.kind, value: row.value});
+        }
     }
 
     /** Creates the tables and restores state. Never throws: on failure the proxy starts with empty state. */
@@ -254,5 +290,27 @@ export function createPersistence({
             return {bucketMinutes, days, history: series};
         },
         status: () => ({...status}),
+        /**
+         * Stores a blocklist entry (or updates the note and expiry of an existing one) and applies it immediately.
+         * expiresAt: epoch ms or null for permanent. Returns the stored entry.
+         */
+        async addBlock({kind, value, note = '', expiresAt = null}) {
+            if (!blocklist) throw new Error('Blocklist not enabled');
+            const {rows} = await pool.query(`
+                INSERT INTO ${table('blocklist')} (kind, value, note, expires_at)
+                VALUES ($1, $2, $3, CASE WHEN $4::bigint IS NULL THEN NULL ELSE to_timestamp($4::bigint / 1000.0) END)
+                ON CONFLICT (kind, value) DO UPDATE SET note = EXCLUDED.note, expires_at = EXCLUDED.expires_at
+                RETURNING ${BLOCKLIST_COLUMNS}`, [kind, value, note, expiresAt]);
+            const entry = blocklistRow(rows[0]);
+            blocklist.add(entry);
+            return entry;
+        },
+        /** Removes a blocklist entry; returns whether it existed. */
+        async removeBlock(id) {
+            if (!blocklist) throw new Error('Blocklist not enabled');
+            const {rows} = await pool.query(`DELETE FROM ${table('blocklist')} WHERE id = $1 RETURNING kind, value`, [id]);
+            blocklist.remove(id);
+            return rows[0] ?? null;
+        },
     };
 }

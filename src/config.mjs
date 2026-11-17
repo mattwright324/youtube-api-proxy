@@ -49,6 +49,7 @@ export function loadConfig(env = process.env, log) {
                 database: env.PG_DBNAME,
             },
             schema: env.PG_SCHEMA || 'public',
+            prefix: env.PG_TABLE_PREFIX || 'proxy_',
             intervalSec: Math.max(10, Number(env.PERSIST_INTERVAL_SEC) || 60),
             retentionDays: Math.max(7, Number(env.RETENTION_DAYS) || 30),
         } : null,

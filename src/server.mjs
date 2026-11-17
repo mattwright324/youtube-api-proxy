@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import express from 'express';
 import cors from 'cors';
 import {createAsnDatabase} from './asn.mjs';
+import {createBlocklist, EXPIRY_DAYS, normalizeEntry} from './blocklist.mjs';
 import {loadConfig, ROOT_DIR} from './config.mjs';
 import {createDistinctTracker, createLimiter, normalizeIp, subjectFor} from './limits.mjs';
 import {loggerFromEnv} from './log.mjs';
@@ -78,9 +79,26 @@ const asnDb = config.asnLookup ? createAsnDatabase({dataDir: config.asnDataDir, 
 asnDb?.start();
 const proxy = createProxy({cacheTtlSec: config.cacheTtlSec, limiter, stats, log});
 // Saves state to Postgres periodically and restores it at startup (when PG_HOST is set). Memory stays the live state.
+// The blocklist is stored in Postgres, so it's only available with persistence
+const blocklist = config.postgres ? createBlocklist() : null;
 const persistence = config.postgres
-    ? createPersistence({...config.postgres, limiter, distinctTracker, stats, log})
+    ? createPersistence({...config.postgres, limiter, distinctTracker, stats, blocklist, log})
     : null;
+
+// Blocklist actions for the monitor page
+const blocklistApi = persistence && {
+    list: () => blocklist.list().map(entry => ({...entry, network: asnDb?.describe(entry.value) ?? null})),
+    async add({kind, value, note, expiry}) {
+        const entry = await persistence.addBlock({
+            kind,
+            value: normalizeEntry(kind, value),
+            note: String(note ?? '').slice(0, 200),
+            expiresAt: expiry === 'permanent' ? null : Date.now() + EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+        });
+        return {...entry, network: asnDb?.describe(entry.value) ?? null};
+    },
+    remove: id => persistence.removeBlock(id),
+};
 // Flags likely script (non-browser) requests for the monitor. Visibility only, nothing is blocked.
 const scriptDetector = createScriptDetector({
     corsWhitelist: config.corsWhitelist,
@@ -112,7 +130,8 @@ if (config.monitorEnabled) {
     app.use(config.monitorPath, createMonitorRouter({
         user: config.monitorUser,
         password: config.monitorPassword,
-        getStats: n => buildMonitorStats({config, limiter, distinctTracker, stats, proxy, asnDb, scriptDetector, persistence}, n),
+        getStats: n => buildMonitorStats({config, limiter, distinctTracker, stats, proxy, asnDb, scriptDetector, persistence, blocklistApi}, n),
+        blocklistApi,
         getHistory: persistence ? days => persistence.history(days) : null,
         log,
     }));
@@ -123,6 +142,13 @@ if (config.monitorEnabled) {
 app.use((req, res, next) => {
     const asn = asnDb?.lookup(normalizeIp(req.ip));
     req.subject = subjectFor(req.ip, asn ? `AS${asn.asn}` : null);
+
+    // Blocklisted: rejected before anything else and only counted as denied, so it stays out of every other statistic
+    if (blocklist?.match(req.subject)) {
+        stats.recordDenied();
+        return proxy.sendDenied(res);
+    }
+
     stats.recordRequest();
 
     // Classified before the limits so blocked requests are counted too

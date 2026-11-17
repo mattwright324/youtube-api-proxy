@@ -55,6 +55,7 @@
     const EXTRA_FIELDS = [
         {key: 'served', label: 'Served requests'},
         {key: 'errors', label: 'Upstream errors'},
+        {key: 'denied', label: 'Blocklisted (not in other counts)'},
     ];
 
     const $ = id => document.getElementById(id);
@@ -172,7 +173,7 @@
         container.querySelector('.table-wrap').scrollTop = scrollTop;
     }
 
-    function tile(label, value, sub, col = 'col-6 col-md-4 col-xl-2') {
+    function tile(label, value, sub, col = 'col-6 col-md-4 col-xl') {
         return h('div', {class: col}, h('div', {class: 'card h-100 tile'}, h('div', {class: 'card-body py-2'},
             h('div', {class: 'label'}, label),
             h('div', {class: 'value'}, value),
@@ -256,6 +257,7 @@
             tile('Blocked today', cf.format(blocked), `${total ? pf.format(blocked / total) : '0%'} of requests`),
             tile('Cache hit rate', hitRate == null ? '—' : pf.format(hitRate), `${fmt(cache.keys)} cached entries`),
             tile('Likely scripts today', cf.format(scripted), `${total ? pf.format(scripted / total) : '0%'} of requests`),
+            data.blocklist ? tile('Blocklisted today', cf.format(data.deniedCount || 0), `${fmt(data.blocklist.length)} blocklist entries`) : null,
         );
     }
 
@@ -544,6 +546,7 @@
 
         const columns = scope === 'asn'
             ? [
+                blockColumn(() => 'asn'),
                 {key: 'id', label: 'ASN', render: row => h('code', {}, row.id)},
                 networkColumn({showAsn: false}),
                 {key: 'minute', label: 'Last minute', num: true, format: fmt},
@@ -553,6 +556,7 @@
                 {key: 'scriptedDay', label: 'Script-like today', num: true, format: fmt},
             ]
             : [
+                blockColumn(() => scope),
                 {key: 'id', label: scope === 'ip' ? 'IP' : 'Block', render: row => h('code', {}, row.id)},
                 networkColumn(),
                 {key: 'minute', label: 'Last minute', num: true, format: fmt},
@@ -601,6 +605,7 @@
             .map(row => ({...row, ratio: row.requests ? row.distinct / row.requests : 0}));
 
         renderTable($('distinctTable'), `distinct-${scope}`, [
+            blockColumn(() => scope),
             {key: 'id', label: scope === 'ip' ? 'IP' : 'Block', render: row => h('code', {}, row.id)},
             networkColumn(),
             {key: 'distinct', label: 'Distinct values', num: true, format: fmt},
@@ -628,6 +633,7 @@
             ? `Blocked requests today by limit: ${reasons.map(([reason, count]) => `${REASON_LABELS[reason] || reason} ${fmt(count)}`).join(', ')}`
             : 'No requests blocked today.';
         renderTable($('eventTable'), 'events', [
+            blockColumn(row => (row.scope === 'ip' || row.scope === 'block' ? row.scope : null)),
             {key: 'time', label: 'Time', format: v => dateTime(v)},
             {key: 'scope', label: 'Scope'},
             {key: 'id', label: 'IP / block', render: row => h('code', {}, row.id)},
@@ -646,6 +652,123 @@
                 render: row => (row.dryRun ? h('span', {class: 'badge text-bg-secondary'}, 'Dry run') : 'Enforced')
             },
         ], rows, {defaultSort: {key: 'time', dir: 'desc'}, emptyText: 'No limits exceeded recently.'});
+    }
+
+    // -----------------------------------------------------------------------
+    // Blocklist
+    // -----------------------------------------------------------------------
+
+    const isBlocked = (kind, value) => Boolean(data.blocklist?.some(entry => entry.kind === kind && entry.value === value));
+
+    /** First table column: a Block button, or a Blocked badge. kindOf(row) gives 'ip', 'block', 'asn' or null. */
+    function blockColumn(kindOf) {
+        return {
+            key: 'blockAction', label: '', sortable: false,
+            render: row => {
+                const kind = kindOf(row);
+                if (!data.blocklist || !kind || row.id === 'unknown') return '';
+                if (isBlocked(kind, row.id)) return h('span', {class: 'badge status-critical', title: 'On the blocklist'}, '✖ Blocked');
+                return h('button', {
+                    class: 'btn btn-sm btn-outline-danger py-0', type: 'button', title: `Block this ${kind === 'asn' ? 'network' : kind}`,
+                    onclick: () => openBlockModal(kind, row.id, row.network),
+                }, 'Block');
+            },
+        };
+    }
+
+    /** Sends a blocklist change. The custom header marks it as coming from this page (checked by the server). */
+    async function blocklistRequest(method, path, body) {
+        const url = new URL(path, location.origin + location.pathname);
+        const response = await fetch(url, {
+            method,
+            headers: {'Content-Type': 'application/json', 'X-Monitor-Request': '1'},
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(json.message || `HTTP ${response.status}`);
+        return json;
+    }
+
+    let pendingBlock = null;
+    function openBlockModal(kind, value, network) {
+        pendingBlock = {kind, value};
+        const kindLabel = {ip: 'IP', block: 'block', asn: 'network'}[kind];
+        $('blockModalTitle').textContent = `Block this ${kindLabel}`;
+        $('blockModalValue').textContent = value;
+        $('blockModalNetwork').textContent = network ? networkText(network) : '';
+        $('blockModalNote').value = '';
+        $('blockModalExpiry').value = '30d';
+        $('blockModalError').textContent = '';
+        bootstrap.Modal.getOrCreateInstance($('blockModal')).show();
+    }
+
+    async function submitBlock(event) {
+        event.preventDefault();
+        if (!pendingBlock) return;
+        try {
+            await blocklistRequest('POST', 'api/blocklist', {
+                ...pendingBlock, note: $('blockModalNote').value, expiry: $('blockModalExpiry').value,
+            });
+            bootstrap.Modal.getOrCreateInstance($('blockModal')).hide();
+            pendingBlock = null;
+            load();
+        } catch (e) {
+            $('blockModalError').textContent = e.message;
+        }
+    }
+
+    async function submitBlocklistForm(event) {
+        event.preventDefault();
+        const status = $('blocklistFormStatus');
+        try {
+            const entry = await blocklistRequest('POST', 'api/blocklist', {
+                kind: $('blockKind').value, value: $('blockValue').value, note: $('blockNote').value, expiry: $('blockExpiry').value,
+            });
+            status.className = 'small text-secondary';
+            status.textContent = `Added ${entry.value}`;
+            $('blockValue').value = '';
+            $('blockNote').value = '';
+            load();
+        } catch (e) {
+            status.className = 'small text-danger';
+            status.textContent = e.message;
+        }
+    }
+
+    async function removeBlock(entry) {
+        if (!confirm(`Remove ${entry.value} from the blocklist? Its requests will be allowed and counted normally again.`)) return;
+        try {
+            await blocklistRequest('DELETE', `api/blocklist/${entry.id}`);
+            load();
+        } catch (e) {
+            alert(`Could not remove: ${e.message}`);
+        }
+    }
+
+    function renderBlocklist() {
+        const entries = data.blocklist;
+        $('blocklistCount').textContent = entries?.length ? String(entries.length) : '';
+        $('blocklistForm').classList.toggle('d-none', !entries);
+        if (!entries) {
+            $('blocklistInfo').textContent = '';
+            $('blocklistTable').replaceChildren(h('p', {class: 'text-secondary mb-0'}, 'The blocklist needs Postgres. Set PG_HOST and the other PG_ settings.'));
+            return;
+        }
+        $('blocklistInfo').textContent = `Requests from these are rejected with the quota error before any limits, and counted only here `
+            + `(${fmt(data.deniedCount || 0)} today). Entries with no recent hits may no longer be needed.`;
+        const kindLabels = {ip: 'IP', block: 'Block', asn: 'Network'};
+        renderTable($('blocklistTable'), 'blocklist', [
+            {key: 'kind', label: 'Kind', format: v => kindLabels[v] || v},
+            {key: 'value', label: 'Value', render: row => h('code', {}, row.value)},
+            networkColumn({showAsn: true}),
+            {key: 'note', label: 'Note', class: 'detail', render: row => h('span', {title: row.note}, row.note || '')},
+            {key: 'createdAt', label: 'Added', format: v => dateTime(v)},
+            {key: 'expiresAt', label: 'Expires', sortValue: row => row.expiresAt ?? Infinity, render: row => (row.expiresAt ? dateTime(row.expiresAt) : 'Permanent')},
+            {key: 'hitsToday', label: 'Hits today', num: true, format: fmt},
+            {key: 'hitsTotal', label: 'Hits total', num: true, format: fmt},
+            {key: 'lastHit', label: 'Last hit', sortValue: row => row.lastHit ?? 0, render: row => (row.lastHit ? dateTime(row.lastHit) : 'Never')},
+            {key: 'remove', label: '', sortable: false, render: row => h('button', {class: 'btn btn-sm btn-outline-secondary py-0', type: 'button', onclick: () => removeBlock(row)}, 'Remove')},
+        ], entries, {defaultSort: {key: 'createdAt', dir: 'desc'}, emptyText: 'No entries. Use the Block buttons in the other tables, or add one above.'});
     }
 
     function renderScripts() {
@@ -768,6 +891,7 @@
         renderDistinct();
         renderEvents();
         renderScripts();
+        renderBlocklist();
         renderUpstream();
         renderCache();
     }
@@ -818,6 +942,8 @@
     if (initialTab) bootstrap.Tab.getOrCreateInstance(initialTab).show();
 
     $('autoRefresh').addEventListener('change', schedule);
+    $('blockModalForm').addEventListener('submit', submitBlock);
+    $('blocklistForm').addEventListener('submit', submitBlocklistForm);
     for (const button of document.querySelectorAll('[data-range]')) {
         button.addEventListener('click', () => setRange(button.dataset.range));
     }

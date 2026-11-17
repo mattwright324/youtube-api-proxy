@@ -90,6 +90,11 @@
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-target="#tab-blocklist" data-bs-toggle="tab" role="tab"
+                            type="button">Blocklist <span class="badge text-bg-secondary" id="blocklistCount"></span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
                     <button class="nav-link" data-bs-target="#tab-upstream" data-bs-toggle="tab" role="tab"
                             type="button">Upstream
                     </button>
@@ -159,6 +164,28 @@
                 <div id="userAgentTable"></div>
             </div>
 
+            <div class="tab-pane fade" id="tab-blocklist" role="tabpanel">
+                <p class="small text-secondary mb-2" id="blocklistInfo"></p>
+                <form autocomplete="off" class="d-flex flex-wrap gap-2 mb-3 align-items-center" id="blocklistForm">
+                    <select aria-label="Kind" class="form-select form-select-sm w-auto" id="blockKind">
+                        <option value="ip">IP</option>
+                        <option value="block">Block (/24)</option>
+                        <option value="asn">Network (ASN)</option>
+                    </select>
+                    <input aria-label="Value" class="form-control form-control-sm w-auto" id="blockValue"
+                           placeholder="203.0.113.7, 203.0.113.0/24 or AS64500" required style="min-width: 17rem">
+                    <input aria-label="Note" class="form-control form-control-sm w-auto" id="blockNote" maxlength="200"
+                           placeholder="Note (optional)" style="min-width: 15rem">
+                    <select aria-label="Expiry" class="form-select form-select-sm w-auto" id="blockExpiry">
+                        <option value="30d">30 days</option>
+                        <option value="permanent">Permanent</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Add to blocklist</button>
+                    <span class="small" id="blocklistFormStatus" role="status"></span>
+                </form>
+                <div id="blocklistTable"></div>
+            </div>
+
             <div class="tab-pane fade" id="tab-upstream" role="tabpanel">
                 <div class="row g-3 mb-3" id="latencyTiles"></div>
                 <div class="row g-3">
@@ -185,6 +212,39 @@
 </main>
 
 <div class="viz-tooltip" hidden id="tooltip" role="status"></div>
+
+<div aria-hidden="true" aria-labelledby="blockModalTitle" class="modal fade" id="blockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form class="modal-content" id="blockModalForm">
+            <div class="modal-header">
+                <h2 class="modal-title h6" id="blockModalTitle">Block</h2>
+                <button aria-label="Close" class="btn-close" data-bs-dismiss="modal" type="button"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-1"><code id="blockModalValue"></code></p>
+                <p class="small text-secondary" id="blockModalNetwork"></p>
+                <p class="small">All requests matching this are rejected with the quota error. They're counted only in the
+                    blocklist, not in the other statistics.</p>
+                <div class="mb-2">
+                    <label class="form-label small" for="blockModalNote">Note (optional)</label>
+                    <input class="form-control form-control-sm" id="blockModalNote" maxlength="200">
+                </div>
+                <div>
+                    <label class="form-label small" for="blockModalExpiry">Expires</label>
+                    <select class="form-select form-select-sm" id="blockModalExpiry">
+                        <option value="30d">After 30 days</option>
+                        <option value="permanent">Never (permanent)</option>
+                    </select>
+                </div>
+                <p class="small text-danger mt-2 mb-0" id="blockModalError" role="alert"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal" type="button">Cancel</button>
+                <button class="btn btn-sm btn-danger" type="submit">Block</button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="monitor.js"></script>

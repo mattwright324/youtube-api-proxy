@@ -2,8 +2,8 @@ import {pacificDay} from './limits.mjs';
 
 const MINUTE_MS = 60 * 1000;
 
-// requests = served + blocked
-export const HISTORY_FIELDS = ['requests', 'served', 'blocked', 'scripted', 'cacheHits', 'upstream', 'units', 'search', 'errors'];
+// requests = served + blocked. denied (blocklisted) requests are counted separately and are not part of requests.
+export const HISTORY_FIELDS = ['requests', 'served', 'blocked', 'scripted', 'cacheHits', 'upstream', 'units', 'search', 'errors', 'denied'];
 
 const MAX_USER_AGENTS = 500;
 const MAX_USER_AGENT_LENGTH = 200;
@@ -33,6 +33,7 @@ function emptyDaily(day) {
     return {
         day,
         requestCount: 0,
+        deniedCount: 0,             // blocklisted requests, kept out of every other count
         blockedReasons: new Map(),  // limit that blocked the request -> count
         signalCounts: new Map(),    // script signal -> count
         userAgents: new Map(),      // user agent -> {requests, scripted}
@@ -44,7 +45,10 @@ function emptyDaily(day) {
 
 /** Flattens a day's totals into {day, kind, key, value} rows for saving. */
 function dailyRows(daily) {
-    const rows = [{day: daily.day, kind: 'requests', key: '', value: daily.requestCount}];
+    const rows = [
+        {day: daily.day, kind: 'requests', key: '', value: daily.requestCount},
+        {day: daily.day, kind: 'denied', key: '', value: daily.deniedCount},
+    ];
     for (const [key, value] of daily.blockedReasons) rows.push({day: daily.day, kind: 'blocked', key, value});
     for (const [key, value] of daily.signalCounts) rows.push({day: daily.day, kind: 'signal', key, value});
     for (const [key, value] of daily.errorCounts) rows.push({day: daily.day, kind: 'error', key, value});
@@ -127,6 +131,11 @@ export function createStats({historyMinutes = 24 * 60, maxEvents = 300, maxError
         recordRequest() {
             bucket().requests += 1;
             today().requestCount += 1;
+        },
+        /** A request rejected by the blocklist. Counted only here, not as a request. */
+        recordDenied() {
+            bucket().denied += 1;
+            today().deniedCount += 1;
         },
         recordServed() {
             bucket().served += 1;
@@ -245,6 +254,7 @@ export function createStats({historyMinutes = 24 * 60, maxEvents = 300, maxError
                 const value = Number(row.value);
                 const [kind, field] = row.kind.split('.');
                 if (kind === 'requests') day.requestCount = Math.max(day.requestCount, value);
+                else if (kind === 'denied') day.deniedCount = Math.max(day.deniedCount, value);
                 else if (kind === 'blocked') day.blockedReasons.set(row.key, Math.max(day.blockedReasons.get(row.key) || 0, value));
                 else if (kind === 'signal') day.signalCounts.set(row.key, Math.max(day.signalCounts.get(row.key) || 0, value));
                 else if (kind === 'error') day.errorCounts.set(row.key, Math.max(day.errorCounts.get(row.key) || 0, value));
@@ -271,6 +281,7 @@ export function createStats({historyMinutes = 24 * 60, maxEvents = 300, maxError
                 totals: totals(),
                 blockedReasons: Object.fromEntries(day.blockedReasons),
                 requestCount: day.requestCount,
+                deniedCount: day.deniedCount,
                 signalCounts: Object.fromEntries(day.signalCounts),
                 userAgents: [...day.userAgents]
                     .map(([userAgent, e]) => ({userAgent, ...e}))

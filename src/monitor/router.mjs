@@ -38,6 +38,7 @@ export function buildMonitorStats({
                                       asnDb,
                                       scriptDetector,
                                       persistence,
+                                      blocklistApi,
                                   }, n, now = Date.now()) {
     // Global rows (id '*') get no network field
     const withNetwork = rows => rows.map(row => (row.id === '*' || !asnDb ? row : {
@@ -75,6 +76,7 @@ export function buildMonitorStats({
         asn: asnDb ? asnDb.status() : null,
         scriptSignals: scriptDetector?.settings ?? null,
         persistence: persistence ? persistence.status() : null,
+        blocklist: blocklistApi ? blocklistApi.list() : null,
         cache: proxy.cacheStats(),
     };
 }
@@ -82,8 +84,33 @@ export function buildMonitorStats({
 /**
  * getStats(n) must return the JSON-serializable data shown on the page, with top lists of up to n rows.
  */
-/** getHistory(days), optional: longer per-interval history (from Postgres) for the charts. */
-export function createMonitorRouter({user, password, getStats, getHistory = null, log = createLogger()}) {
+/**
+ * Changes (blocklist add/remove) are only accepted from the monitor page itself. Browsers send saved basic auth
+ * credentials automatically, so without this another site could trigger them for a logged-in user.
+ */
+function sameOriginOnly(log) {
+    return (req, res, next) => {
+        const site = req.get('sec-fetch-site');
+        const origin = req.get('origin');
+        let originHost = null;
+        try {
+            originHost = origin ? new URL(origin).host : null;
+        } catch {
+            originHost = 'invalid';
+        }
+        if (req.get('x-monitor-request') !== '1' || (site && site !== 'same-origin') || (originHost && originHost !== req.get('host'))) {
+            log.warn('monitor change rejected, not from the monitor page', {ip: req.ip, method: req.method, site, origin});
+            return res.status(403).json({message: 'Changes are only accepted from the monitor page'});
+        }
+        next();
+    };
+}
+
+/**
+ * getHistory(days), optional: longer per-interval history (from Postgres) for the charts.
+ * blocklistApi, optional: {list, add, remove} for managing the blocklist (needs Postgres).
+ */
+export function createMonitorRouter({user, password, getStats, getHistory = null, blocklistApi = null, log = createLogger()}) {
     const failures = new Map(); // ip -> {count, until}
     const loggedIn = new Set();  // IPs that have logged in since start, so polling doesn't log every request
     const router = express.Router();
@@ -147,6 +174,41 @@ export function createMonitorRouter({user, password, getStats, getHistory = null
         } catch (error) {
             log.warn('monitor history failed', {error: error.message});
             res.status(503).json({message: 'History unavailable'});
+        }
+    });
+
+    const changes = [sameOriginOnly(log), express.json({limit: '10kb'})];
+    const noBlocklist = res => res.status(404).json({message: 'The blocklist needs Postgres (PG_HOST)'});
+
+    router.post('/api/blocklist', changes, async (req, res) => {
+        if (!blocklistApi) return noBlocklist(res);
+        const {kind, value, note, expiry} = req.body || {};
+        try {
+            const entry = await blocklistApi.add({kind, value, note, expiry});
+            log.info('blocklist entry added', {kind: entry.kind, value: entry.value, expiry: expiry === 'permanent' ? 'permanent' : '30 days', note: entry.note || undefined, by: req.ip});
+            res.status(201).json(entry);
+        } catch (error) {
+            // normalizeEntry errors are messages for the user; anything else is a server problem
+            if (error.code) {
+                log.error('blocklist add failed', {error});
+                return res.status(503).json({message: 'Could not save the entry'});
+            }
+            res.status(400).json({message: error.message});
+        }
+    });
+
+    router.delete('/api/blocklist/:id', changes, async (req, res) => {
+        if (!blocklistApi) return noBlocklist(res);
+        const id = Number(req.params.id);
+        if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({message: 'Invalid id'});
+        try {
+            const removed = await blocklistApi.remove(id);
+            if (!removed) return res.status(404).json({message: 'Entry not found'});
+            log.info('blocklist entry removed', {kind: removed.kind, value: removed.value, by: req.ip});
+            res.json({removed: true});
+        } catch (error) {
+            log.error('blocklist remove failed', {error});
+            res.status(503).json({message: 'Could not remove the entry'});
         }
     });
 
