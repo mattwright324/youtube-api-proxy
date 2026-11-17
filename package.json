@@ -1,24 +1,29 @@
 {
   "name": "youtube-api-proxy",
-  "version": "1.0.1",
+  "version": "2.0.0",
+  "description": "Proxy for the YouTube API for additional rate limiting and keeping your key secret",
   "engines": {
-    "node": "22.x"
+    "node": "26.x"
   },
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "start": "node -r dotenv/config server.mjs"
-  },
+  "main": "src/server.mjs",
   "type": "module",
-  "keywords": ["youtube", "youtube-api", "proxy"],
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.mjs",
+    "dev": "node --watch --env-file-if-exists=.env src/server.mjs",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage"
+  },
+  "keywords": [
+    "youtube",
+    "youtube-api",
+    "proxy"
+  ],
   "author": "mattwright324",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
-    "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
-    "cors": "^2.8.5",
-    "node-cache": "^5.1.2",
-    "dotenv": "^16.4.7",
-    "youtubei.js": "^13.0.0"
+    "bootstrap": "^5.3.9",
+    "cors": "^2.8.6",
+    "express": "^4.22.3",
+    "node-cache": "^5.1.2"
   }
 }

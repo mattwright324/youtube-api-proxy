@@ -1,0 +1,288 @@
+/* Chart and page tokens (dark mode, validated against the #1a1a19 chart surface) */
+.viz {
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --axis: #383835;
+    --hairline: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --meter-track: #0d366b;
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-critical: #d03b3b;
+
+    color-scheme: dark;
+}
+
+[data-bs-theme=dark] {
+    --bs-body-bg: var(--page);
+    --bs-body-color: var(--text-primary);
+    --bs-secondary-color: var(--text-secondary);
+    --bs-body-font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --bs-border-color: var(--hairline);
+}
+
+.navbar {
+    background: var(--page);
+}
+
+.form-select, .form-control {
+    --bs-border-color: #4a4a47;
+}
+
+.card {
+    --bs-card-bg: var(--surface-1);
+    --bs-card-border-color: var(--hairline);
+    --bs-card-cap-bg: var(--surface-1);
+    transition: opacity 0.2s;
+}
+
+.table {
+    --bs-table-bg: transparent;
+}
+
+/* Refetch keeps the frame: dim the previous render while loading */
+.refreshing .card {
+    opacity: 0.6;
+}
+
+/* Tiles */
+.tile .label {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.tile .value {
+    font-size: 1.6rem;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.tile .sub {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+/* Meters */
+.meter + .meter {
+    margin-top: 0.9rem;
+}
+
+.meter .meter-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.meter .meter-figure {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.meter-track {
+    height: 8px;
+    margin-top: 0.3rem;
+    background: var(--meter-track);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.meter-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--series-1);
+}
+
+.meter-fill.warning {
+    background: var(--status-warning);
+}
+
+.meter-fill.critical {
+    background: var(--status-critical);
+}
+
+.meter-status {
+    font-size: 0.75rem;
+    margin-top: 0.2rem;
+    color: var(--text-secondary);
+}
+
+/* Small multiples */
+.charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem 1.25rem;
+}
+
+.chart-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.85rem;
+}
+
+.chart-head .chart-now {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.chart svg {
+    display: block;
+    width: 100%;
+    height: 140px;
+    overflow: visible;
+    outline: none;
+}
+
+.chart svg:focus-visible {
+    box-shadow: 0 0 0 2px var(--series-1);
+    border-radius: 4px;
+}
+
+.chart .grid {
+    stroke: var(--gridline);
+    stroke-width: 1;
+}
+
+.chart .baseline {
+    stroke: var(--axis);
+    stroke-width: 1;
+}
+
+.chart .tick {
+    fill: var(--text-muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.chart .line {
+    fill: none;
+    stroke: var(--series-1);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.chart .area {
+    fill: var(--series-1);
+    opacity: 0.1;
+}
+
+.chart .dot {
+    fill: var(--series-1);
+    stroke: var(--surface-1);
+    stroke-width: 2;
+}
+
+.chart .crosshair {
+    stroke: var(--text-muted);
+    stroke-width: 1;
+}
+
+.viz-tooltip {
+    position: fixed;
+    z-index: 1080;
+    pointer-events: none;
+    min-width: 170px;
+    padding: 0.4rem 0.6rem;
+    background: #262624;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.viz-tooltip .tt-time {
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+}
+
+.viz-tooltip .tt-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.viz-tooltip .tt-row.active .tt-label {
+    color: var(--text-primary);
+}
+
+.viz-tooltip .tt-key {
+    width: 10px;
+    height: 2px;
+    background: var(--series-1);
+    border-radius: 1px;
+}
+
+.viz-tooltip .tt-value {
+    font-weight: 600;
+    min-width: 3.5rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.viz-tooltip .tt-label {
+    color: var(--text-muted);
+}
+
+/* Tables */
+.table-wrap {
+    max-height: 520px;
+    overflow: auto;
+}
+
+.table-wrap thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-1);
+    z-index: 1;
+}
+
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+th.num, td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Space between a right-aligned number column and a left-aligned text column after it */
+th.num + th:not(.num), td.num + td:not(.num) {
+    padding-left: 1.5rem;
+}
+
+td code {
+    color: var(--text-primary);
+}
+
+td.network-col {
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+td.detail {
+    max-width: 480px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.badge.status-warning {
+    background: var(--status-warning);
+    color: #0b0b0b;
+}
+
+.badge.status-critical {
+    background: var(--status-critical);
+    color: #ffffff;
+}
