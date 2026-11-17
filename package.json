@@ -10,8 +10,8 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.mjs",
     "dev": "node --watch --env-file-if-exists=.env src/server.mjs",
-    "test": "node --test",
-    "test:coverage": "node --test --experimental-test-coverage"
+    "test": "node --env-file-if-exists=.env --test",
+    "test:coverage": "node --env-file-if-exists=.env --test --experimental-test-coverage"
   },
   "keywords": [
     "youtube",
@@ -24,6 +24,7 @@
     "bootstrap": "^5.3.9",
     "cors": "^2.8.6",
     "express": "^4.22.3",
-    "node-cache": "^5.1.2"
+    "node-cache": "^5.1.2",
+    "pg": "^8.23.1"
   }
 }

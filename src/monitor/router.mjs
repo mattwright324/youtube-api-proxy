@@ -36,7 +36,8 @@ export function buildMonitorStats({
                                       stats,
                                       proxy,
                                       asnDb,
-                                      scriptDetector
+                                      scriptDetector,
+                                      persistence,
                                   }, n, now = Date.now()) {
     // Global rows (id '*') get no network field
     const withNetwork = rows => rows.map(row => (row.id === '*' || !asnDb ? row : {
@@ -73,6 +74,7 @@ export function buildMonitorStats({
         events: withNetwork(usage.events),
         asn: asnDb ? asnDb.status() : null,
         scriptSignals: scriptDetector?.settings ?? null,
+        persistence: persistence ? persistence.status() : null,
         cache: proxy.cacheStats(),
     };
 }
@@ -80,7 +82,8 @@ export function buildMonitorStats({
 /**
  * getStats(n) must return the JSON-serializable data shown on the page, with top lists of up to n rows.
  */
-export function createMonitorRouter({user, password, getStats, log = createLogger()}) {
+/** getHistory(days), optional: longer per-interval history (from Postgres) for the charts. */
+export function createMonitorRouter({user, password, getStats, getHistory = null, log = createLogger()}) {
     const failures = new Map(); // ip -> {count, until}
     const loggedIn = new Set();  // IPs that have logged in since start, so polling doesn't log every request
     const router = express.Router();
@@ -135,6 +138,16 @@ export function createMonitorRouter({user, password, getStats, log = createLogge
     router.get('/api/stats', (req, res) => {
         const n = Math.min(Math.max(Number(req.query.n) || 100, 1), 1000);
         res.json(getStats(n));
+    });
+
+    router.get('/api/history', async (req, res) => {
+        if (!getHistory) return res.status(404).json({message: 'Longer history needs Postgres (PG_HOST)'});
+        try {
+            res.json(await getHistory(7));
+        } catch (error) {
+            log.warn('monitor history failed', {error: error.message});
+            res.status(503).json({message: 'History unavailable'});
+        }
     });
 
     router.use(express.static(UI_DIR));

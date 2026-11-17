@@ -10,6 +10,7 @@
     const fmt = v => (v == null ? '—' : nf.format(v));
     const ms = v => (v == null ? '—' : `${nf.format(v)} ms`);
     const time = t => new Date(t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    const dayLabel = t => new Date(t).toLocaleDateString([], {month: 'short', day: 'numeric'});
     const dateTime = t => new Date(t).toLocaleString([], {
         month: 'short',
         day: 'numeric',
@@ -205,7 +206,19 @@
                 title: 'Pacific date used for daily limits'
             }, data.limiter.day),
             asnBadge(),
+            persistenceBadge(),
         ].filter(Boolean));
+        $('rangeButtons').classList.toggle('d-none', !data.persistence);
+    }
+
+    function persistenceBadge() {
+        const p = data.persistence;
+        if (!p) return null;
+        const title = [`Postgres schema: ${p.schema}`, p.lastSave && `Last save ${new Date(p.lastSave).toLocaleString()} (${p.lastSaveMs} ms)`,
+            p.lastError && `Last error: ${p.lastError}`].filter(Boolean).join('\n');
+        if (!p.ready || p.lastError) return h('span', {class: 'badge status-warning', title}, '⚠ Postgres unavailable');
+        const ago = p.lastSave ? Math.max(0, Math.round((data.now - Date.parse(p.lastSave)) / 1000)) : null;
+        return h('span', {class: 'badge text-bg-secondary', title}, ago == null ? 'Restored from Postgres' : `Saved ${ago}s ago`);
     }
 
     function asnBadge() {
@@ -305,7 +318,7 @@
             plot.addEventListener('pointerleave', () => setHover(null));
             plot.addEventListener('blur', () => setHover(null));
             plot.addEventListener('keydown', event => {
-                const last = data.history.length - 1;
+                const last = chartSource().history.length - 1;
                 if (event.key === 'ArrowLeft') hoverIndex = Math.max(0, (hoverIndex ?? last) - 1);
                 else if (event.key === 'ArrowRight') hoverIndex = Math.min(last, (hoverIndex ?? last - 1) + 1);
                 else if (event.key === 'Escape') hoverIndex = null;
@@ -317,16 +330,55 @@
         }
     }
 
+    // Charts show either the in-memory per-minute history (24 hours) or saved 10-minute intervals from Postgres (7 days)
+    let range = '24h';
+    let requestedRange = new URLSearchParams(location.search).get('range');
+    let longHistory = null;
+
+    function chartSource() {
+        if (range === '7d' && longHistory) {
+            return {history: longHistory.history, bucketMs: longHistory.bucketMinutes * MINUTE_MS, unit: `${longHistory.bucketMinutes} minutes`, long: true};
+        }
+        return {history: data.history, bucketMs: MINUTE_MS, unit: 'minute', long: false};
+    }
+
+    async function loadLongHistory() {
+        const url = new URL('api/history', location.origin + location.pathname);
+        const response = await fetch(url, {cache: 'no-store'});
+        if (!response.ok) throw new Error(`history HTTP ${response.status}`);
+        longHistory = await response.json();
+    }
+
+    async function setRange(next) {
+        range = next;
+        for (const button of document.querySelectorAll('[data-range]')) {
+            button.classList.toggle('active', button.dataset.range === range);
+            button.setAttribute('aria-pressed', String(button.dataset.range === range));
+        }
+        $('chartTitle').textContent = range === '7d' ? 'Last 7 days, per 10 minutes' : 'Last 24 hours, per minute';
+        if (range === '7d') {
+            try {
+                await loadLongHistory();
+            } catch (e) {
+                $('error').textContent = `Could not load 7 day history: ${e.message}`;
+                $('error').classList.remove('d-none');
+                return setRange('24h');
+            }
+        }
+        if (data) renderCharts();
+    }
+
     function indexAt(chart, clientX) {
         const g = chart.geometry;
         if (!g) return null;
         const rect = chart.plot.getBoundingClientRect();
         const t = g.t0 + ((clientX - rect.left - g.left) / g.plotW) * g.span;
-        return Math.max(0, Math.min(g.n - 1, Math.round((t - g.firstT) / MINUTE_MS)));
+        return Math.max(0, Math.min(g.n - 1, Math.round((t - g.firstT) / g.bucketMs)));
     }
 
     function drawChart(chart) {
-        const history = data.history;
+        const source = chartSource();
+        const history = source.history;
         const values = history.map(b => b[chart.series.key]);
         const n = values.length;
         const width = chart.plot.clientWidth || 300;
@@ -338,9 +390,9 @@
         const plotW = width - left - right;
         const plotH = height - top - bottom;
         const max = niceMax(Math.max(1, ...values));
-        // Fixed 24 hour window ending at the current minute; minutes before the last restart stay empty
+        // Fixed window ending at the current interval; time with no data (e.g. before the last restart) stays empty
         const lastT = history[n - 1].t;
-        const span = (HISTORY_MINUTES - 1) * MINUTE_MS;
+        const span = ((source.long ? n : HISTORY_MINUTES) - 1) * source.bucketMs;
         const t0 = lastT - span;
         const firstT = history[0].t;
         const x = i => left + ((history[i].t - t0) / span) * plotW;
@@ -371,7 +423,7 @@
                 class: 'tick', x: left + fraction * plotW, y: height - 4,
                 'text-anchor': fraction === 0 ? 'start' : fraction === 1 ? 'end' : 'middle',
             });
-            label.textContent = fraction === 1 ? 'now' : time(t0 + fraction * span);
+            label.textContent = fraction === 1 ? 'now' : source.long ? dayLabel(t0 + fraction * span) : time(t0 + fraction * span);
             plot.append(label);
         }
 
@@ -387,10 +439,10 @@
         // End dot on the last full minute; the current minute is still filling
         if (n >= 2) {
             plot.append(svg('circle', {class: 'dot', cx: x(n - 2), cy: y(values[n - 2]), r: 4}));
-            chart.now.textContent = `${nf.format(values[n - 2])} last full minute`;
+            chart.now.textContent = `${nf.format(values[n - 2])} last full ${source.unit}`;
         } else {
             plot.append(svg('circle', {class: 'dot', cx: x(0), cy: y(values[0]), r: 4}));
-            chart.now.textContent = `${nf.format(values[0])} so far, first minute`;
+            chart.now.textContent = `${nf.format(values[0])} so far, first ${source.unit}`;
         }
 
         chart.crosshair = svg('line', {class: 'crosshair', y1: top, y2: top + plotH, visibility: 'hidden'});
@@ -419,9 +471,10 @@
             return;
         }
 
-        const bucket = data.history[index];
+        const shown = chartSource().history;
+        const bucket = shown[index];
         tooltip.replaceChildren(
-            h('div', {class: 'tt-time'}, dateTime(bucket.t), index === data.history.length - 1 ? ' (in progress)' : ''),
+            h('div', {class: 'tt-time'}, dateTime(bucket.t), index === shown.length - 1 ? ' (in progress)' : ''),
             ...SERIES.map(series => h('div', {class: `tt-row ${source?.series === series ? 'active' : ''}`},
                 h('span', {class: 'tt-key'}),
                 h('span', {class: 'tt-value'}, nf.format(bucket[series.key])),
@@ -458,9 +511,10 @@
     }
 
     function renderHistoryTable() {
-        const rows = [...data.history].reverse();
+        const source = chartSource();
+        const rows = [...source.history].reverse();
         renderTable($('historyTable'), 'history', [
-            {key: 't', label: 'Minute', format: v => dateTime(v)},
+            {key: 't', label: source.long ? 'Interval start' : 'Minute', format: v => dateTime(v)},
             ...SERIES.map(s => ({key: s.key, label: s.label, num: true, format: fmt})),
             ...EXTRA_FIELDS.map(f => ({key: f.key, label: f.label, num: true, format: fmt})),
         ], rows, {defaultSort: {key: 't', dir: 'desc'}});
@@ -571,8 +625,8 @@
         $('eventCount').textContent = data.events.length ? String(data.events.length) : '';
         const reasons = Object.entries(data.blockedReasons || {}).sort((a, b) => b[1] - a[1]);
         $('blockedReasons').textContent = reasons.length
-            ? `Blocked requests since restart by limit: ${reasons.map(([reason, count]) => `${REASON_LABELS[reason] || reason} ${fmt(count)}`).join(', ')}`
-            : 'No requests blocked since the last restart.';
+            ? `Blocked requests today by limit: ${reasons.map(([reason, count]) => `${REASON_LABELS[reason] || reason} ${fmt(count)}`).join(', ')}`
+            : 'No requests blocked today.';
         renderTable($('eventTable'), 'events', [
             {key: 'time', label: 'Time', format: v => dateTime(v)},
             {key: 'scope', label: 'Scope'},
@@ -591,7 +645,7 @@
                 label: 'Mode',
                 render: row => (row.dryRun ? h('span', {class: 'badge text-bg-secondary'}, 'Dry run') : 'Enforced')
             },
-        ], rows, {defaultSort: {key: 'time', dir: 'desc'}, emptyText: 'No limits exceeded since the last restart.'});
+        ], rows, {defaultSort: {key: 'time', dir: 'desc'}, emptyText: 'No limits exceeded recently.'});
     }
 
     function renderScripts() {
@@ -619,7 +673,7 @@
         const agents = (data.userAgents || [])
             .filter(row => !filter || row.userAgent.toLowerCase().includes(filter))
             .map(row => ({...row, share: row.requests ? row.scripted / row.requests : 0}));
-        $('userAgentInfo').textContent = `Since restart, top ${agents.length} of ${fmt(data.userAgentsTracked || 0)} tracked.`;
+        $('userAgentInfo').textContent = `Today, top ${agents.length} of ${fmt(data.userAgentsTracked || 0)} tracked.`;
         renderTable($('userAgentTable'), 'userAgents', [
             {
                 key: 'userAgent',
@@ -630,7 +684,7 @@
             {key: 'requests', label: 'Requests', num: true, format: fmt},
             {key: 'scripted', label: 'Script-like', num: true, format: fmt},
             {key: 'share', label: 'Share', num: true, format: v => pf.format(v)},
-        ], agents, {defaultSort: {key: 'requests', dir: 'desc'}, emptyText: 'No requests since the last restart.'});
+        ], agents, {defaultSort: {key: 'requests', dir: 'desc'}, emptyText: 'No requests today.'});
     }
 
     function renderUpstream() {
@@ -658,14 +712,14 @@
             {key: 'errors', label: 'Errors', num: true, format: fmt},
         ], endpoints, {
             defaultSort: {key: 'upstream', dir: 'desc'},
-            emptyText: 'No upstream calls since the last restart.'
+            emptyText: 'No upstream calls today.'
         });
 
         renderTable($('errorTable'), 'errors', [
             {key: 'status', label: 'Status', num: true},
             {key: 'reason', label: 'Reason', format: v => v || '—'},
             {key: 'count', label: 'Count', num: true, format: fmt},
-        ], errors, {defaultSort: {key: 'count', dir: 'desc'}, emptyText: 'No upstream errors since the last restart.'});
+        ], errors, {defaultSort: {key: 'count', dir: 'desc'}, emptyText: 'No upstream errors today.'});
 
         renderTable($('recentErrorTable'), 'recentErrors', [
             {key: 'time', label: 'Time', format: v => dateTime(v)},
@@ -694,7 +748,7 @@
             tile('Cached entries', fmt(c.keys), `TTL ${fmt(c.ttlSec)}s`, col),
             tile('Hit rate', total ? pf.format(c.hits / total) : '—', `${fmt(c.hits)} hits, ${fmt(c.misses)} misses`, col),
             tile('Approx. size', `${cf.format((c.ksize + c.vsize) / 1024)} KB`, 'keys plus values', col),
-            tile('Quota units used', fmt(t.units), 'since restart', col),
+            tile('Quota units used', fmt(t.units), 'today', col),
             tile('Quota units saved by cache', fmt(t.unitsSaved), `${fmt(t.cached)} cached responses in total`, col),
             tile('Search calls', fmt(t.search), `${fmt(t.searchSaved)} served from cache`, col),
             tile('Vanity URLs resolved', fmt(resolve?.upstream ?? 0), `${fmt(resolve?.cached ?? 0)} served from cache`, col),
@@ -736,6 +790,12 @@
             }
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             data = await response.json();
+            if (range === '7d' && data.persistence) await loadLongHistory().catch(() => {});
+            // ?range=7d opens the page on the 7 day view (once Postgres is known to be available)
+            if (requestedRange === '7d' && data.persistence) {
+                requestedRange = null;
+                await setRange('7d');
+            }
             $('error').classList.add('d-none');
             render();
             $('updated').textContent = `Updated ${new Date(data.now).toLocaleTimeString()}`;
@@ -758,6 +818,9 @@
     if (initialTab) bootstrap.Tab.getOrCreateInstance(initialTab).show();
 
     $('autoRefresh').addEventListener('change', schedule);
+    for (const button of document.querySelectorAll('[data-range]')) {
+        button.addEventListener('click', () => setRange(button.dataset.range));
+    }
     $('refreshNow').addEventListener('click', load);
     for (const id of ['consumerScope', 'consumerMetric', 'consumerFilter']) $(id).addEventListener('input', () => data && renderConsumers());
     for (const id of ['distinctScope', 'distinctFilter']) $(id).addEventListener('input', () => data && renderDistinct());

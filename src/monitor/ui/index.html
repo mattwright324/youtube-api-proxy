@@ -45,7 +45,13 @@
             <section class="card h-100">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-baseline mb-2">
-                        <h2 class="h6 m-0">Last 24 hours, per minute</h2>
+                        <div class="d-flex align-items-center gap-3">
+                            <h2 class="h6 m-0" id="chartTitle">Last 24 hours, per minute</h2>
+                            <div class="btn-group btn-group-sm d-none" role="group" aria-label="Time range" id="rangeButtons">
+                                <button type="button" class="btn btn-outline-secondary active" data-range="24h" aria-pressed="true">24 hours</button>
+                                <button type="button" class="btn btn-outline-secondary" data-range="7d" aria-pressed="false">7 days</button>
+                            </div>
+                        </div>
                         <button aria-controls="historyTableWrap" aria-expanded="false" class="btn btn-sm btn-link p-0"
                                 data-bs-target="#historyTableWrap" data-bs-toggle="collapse"
                                 type="button">
@@ -142,7 +148,7 @@
 
             <div class="tab-pane fade" id="tab-scripts" role="tabpanel">
                 <p class="small text-secondary mb-2" id="scriptInfo"></p>
-                <h3 class="h6">Signals since restart</h3>
+                <h3 class="h6">Signals today</h3>
                 <div class="mb-3" id="signalTable"></div>
                 <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
                     <h3 class="h6 m-0 me-2">Top user agents</h3>

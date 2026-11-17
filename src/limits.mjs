@@ -80,6 +80,11 @@ export function subjectFor(rawIp, asn = null) {
 const pacificDate = new Intl.DateTimeFormat('en-CA', {timeZone: 'America/Los_Angeles'});
 let dayCache = {second: -1, key: ''};
 
+/** The current Pacific date (YYYY-MM-DD), which is when daily limits reset. */
+export function pacificDay(now = Date.now()) {
+    return dayKey(now);
+}
+
 function dayKey(now) {
     const second = Math.floor(now / 1000);
     if (second !== dayCache.second) {
@@ -102,6 +107,8 @@ function topN(list, n) {
 export function createLimiter({limits, dryRun = false, log = createLogger(), onLimit}) {
     // `${scope}|${id}|${metric}` -> usage entry
     const entries = new Map();
+    // Daily counts that changed but were reset by the day rolling over before being exported
+    let pendingRollover = [];
 
     // null when the subject has no id for a scope (e.g. no ASN data), so that scope is skipped
     function idFor(subject, scope) {
@@ -117,6 +124,10 @@ export function createLimiter({limits, dryRun = false, log = createLogger(), onL
         }
         const day = dayKey(now);
         if (day !== entry.day) {
+            if (entry.dirty) {
+                pendingRollover.push({day: entry.day, scope: entry.scope, id: entry.id, metric: entry.metric, count: entry.dayCount});
+                entry.dirty = false;
+            }
             entry.day = day;
             entry.dayCount = 0;
         }
@@ -187,6 +198,37 @@ export function createLimiter({limits, dryRun = false, log = createLogger(), onL
     function add(entry, amount) {
         entry.currMinute += amount;
         entry.dayCount += amount;
+        entry.dirty = true;
+    }
+
+    /**
+     * Daily counts that changed since the last call, as {day, scope, id, metric, count} rows (count is the day's total).
+     * Used to save state; see persistence.mjs.
+     */
+    function exportChanges(now = Date.now()) {
+        const rows = pendingRollover;
+        pendingRollover = [];
+        for (const entry of entries.values()) {
+            roll(entry, now);
+            if (entry.dirty) {
+                rows.push({day: entry.day, scope: entry.scope, id: entry.id, metric: entry.metric, count: entry.dayCount});
+                entry.dirty = false;
+            }
+        }
+        return rows;
+    }
+
+    /** Restores today's daily counts from saved {day, scope, id, metric, count} rows. Other days are ignored. */
+    function importCounts(rows, now = Date.now()) {
+        const today = dayKey(now);
+        let restored = 0;
+        for (const row of rows) {
+            if (row.day !== today) continue;
+            const entry = getEntry(row.scope, row.id, row.metric, now);
+            entry.dayCount = Math.max(entry.dayCount, Number(row.count));
+            restored++;
+        }
+        return restored;
     }
 
     /**
@@ -279,7 +321,7 @@ export function createLimiter({limits, dryRun = false, log = createLogger(), onL
         return {dryRun, day: dayKey(now), tracked: entries.size, global, top};
     }
 
-    return {consume, record, usage, snapshot, prune};
+    return {consume, record, usage, snapshot, prune, exportChanges, importCounts};
 }
 
 // ---------------------------------------------------------------------------
@@ -303,13 +345,20 @@ function hash(value) {
  * for the rest of the day.
  */
 export function createDistinctTracker({minRequests, maxRatio, dryRun = false, log = createLogger(), onLimit}) {
-    // `${scope}|${id}` -> {scope, id, day, requests, values: Set|null, limited}
+    // `${scope}|${id}` -> {scope, id, day, requests, values: Set|null, limited, distinct?, dirty?}
     const entries = new Map();
+    let pendingRollover = [];
+
+    const exportRow = entry => ({
+        day: entry.day, scope: entry.scope, id: entry.id, requests: entry.requests,
+        distinct: entry.values ? entry.values.size : entry.distinct || 0, limited: entry.limited,
+    });
 
     function getEntry(scope, id, day) {
         const key = `${scope}|${id}`;
         let entry = entries.get(key);
         if (!entry || entry.day !== day) {
+            if (entry?.dirty) pendingRollover.push(exportRow(entry));
             entry = {scope, id, day, requests: 0, values: new Set(), limited: false};
             entries.set(key, entry);
         }
@@ -330,6 +379,7 @@ export function createDistinctTracker({minRequests, maxRatio, dryRun = false, lo
             }
             entry.requests += 1;
             entry.values.add(hash(value));
+            entry.dirty = true;
             const distinct = entry.values.size;
             if (entry.requests >= minRequests && distinct / entry.requests >= maxRatio) {
                 entry.limited = true;
@@ -378,5 +428,36 @@ export function createDistinctTracker({minRequests, maxRatio, dryRun = false, lo
         return top;
     }
 
-    return {observe, snapshot, prune};
+    /** Entries that changed since the last call, as {day, scope, id, requests, distinct, limited} rows. */
+    function exportChanges(now = Date.now()) {
+        const rows = pendingRollover;
+        pendingRollover = [];
+        for (const entry of entries.values()) {
+            if (entry.dirty) {
+                rows.push(exportRow(entry));
+                entry.dirty = false;
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * Restores today's limited scopes from saved rows, so a restart doesn't lift them. The seen values aren't saved,
+     * so scopes that weren't limited start counting again.
+     */
+    function importLimited(rows, now = Date.now()) {
+        const today = dayKey(now);
+        let restored = 0;
+        for (const row of rows) {
+            if (row.day !== today || !row.limited) continue;
+            entries.set(`${row.scope}|${row.id}`, {
+                scope: row.scope, id: row.id, day: today, requests: Number(row.requests), values: null,
+                distinct: Number(row.distinct), limited: true,
+            });
+            restored++;
+        }
+        return restored;
+    }
+
+    return {observe, snapshot, prune, exportChanges, importLimited};
 }

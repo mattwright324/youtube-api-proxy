@@ -6,6 +6,7 @@ import {createAsnDatabase} from './asn.mjs';
 import {loadConfig, ROOT_DIR} from './config.mjs';
 import {createDistinctTracker, createLimiter, normalizeIp, subjectFor} from './limits.mjs';
 import {loggerFromEnv} from './log.mjs';
+import {createPersistence} from './persistence.mjs';
 import {createScriptDetector} from './signals.mjs';
 import {buildMonitorStats, createMonitorRouter} from './monitor/router.mjs';
 import {createProxy} from './proxy/cache.mjs';
@@ -49,6 +50,10 @@ log.info('config', {
         : false,
     scriptSignals: {expectedParams: config.scriptExpectedParams, extraUaPatterns: config.scriptUaPatterns.length},
     asnLookup: config.asnLookup ? config.asnDataDir : false,
+    postgres: config.postgres
+        ? {host: config.postgres.connection.host, schema: config.postgres.schema, intervalSec: config.postgres.intervalSec,
+            retentionDays: config.postgres.retentionDays}
+        : false,
     monitor: config.monitorEnabled,
     logLevel: process.env.LOG_LEVEL || 'info',
     logFormat: process.env.LOG_FORMAT || 'text',
@@ -72,6 +77,10 @@ const distinctTracker = config.distinctParam ? createDistinctTracker({
 const asnDb = config.asnLookup ? createAsnDatabase({dataDir: config.asnDataDir, log}) : null;
 asnDb?.start();
 const proxy = createProxy({cacheTtlSec: config.cacheTtlSec, limiter, stats, log});
+// Saves state to Postgres periodically and restores it at startup (when PG_HOST is set). Memory stays the live state.
+const persistence = config.postgres
+    ? createPersistence({...config.postgres, limiter, distinctTracker, stats, log})
+    : null;
 // Flags likely script (non-browser) requests for the monitor. Visibility only, nothing is blocked.
 const scriptDetector = createScriptDetector({
     corsWhitelist: config.corsWhitelist,
@@ -103,7 +112,8 @@ if (config.monitorEnabled) {
     app.use(config.monitorPath, createMonitorRouter({
         user: config.monitorUser,
         password: config.monitorPassword,
-        getStats: n => buildMonitorStats({config, limiter, distinctTracker, stats, proxy, asnDb, scriptDetector}, n),
+        getStats: n => buildMonitorStats({config, limiter, distinctTracker, stats, proxy, asnDb, scriptDetector, persistence}, n),
+        getHistory: persistence ? days => persistence.history(days) : null,
         log,
     }));
     log.info('monitor enabled');
@@ -168,6 +178,9 @@ app.use((error, req, res, next) => {
     res.status(status).send({message: 'Bad request'});
 });
 
+// Restore saved state before accepting requests, so today's limits and counts carry over a restart
+await persistence?.start();
+
 const server = http.createServer(app).listen(config.port, () => {
     log.info('listening', {port: server.address().port});
 });
@@ -177,7 +190,9 @@ const SHUTDOWN_TIMEOUT_MS = 10 * 1000;
 
 function shutdown(signal) {
     log.info('shutting down', {signal});
-    server.close(() => {
+    server.close(async () => {
+        // Final save once requests have finished, so a redeploy doesn't lose the last interval
+        await persistence?.stop();
         log.info('stopped');
         process.exit(0);
     });

@@ -39,6 +39,19 @@ export function loadConfig(env = process.env, log) {
         monitorPassword: env.MONITOR_PASSWORD || '',
         scriptExpectedParams: optionalList(env, 'SCRIPT_EXPECTED_PARAMS'),
         scriptUaPatterns: optionalList(env, 'SCRIPT_UA_PATTERNS'),
+        // Postgres persistence, enabled when PG_HOST is set
+        postgres: env.PG_HOST ? {
+            connection: {
+                host: env.PG_HOST,
+                port: Number(env.PG_PORT) || 5432,
+                user: env.PG_USER,
+                password: env.PG_PASS,
+                database: env.PG_DBNAME,
+            },
+            schema: env.PG_SCHEMA || 'public',
+            intervalSec: Math.max(10, Number(env.PERSIST_INTERVAL_SEC) || 60),
+            retentionDays: Math.max(7, Number(env.RETENTION_DAYS) || 30),
+        } : null,
         asnLookup: env.ASN_LOOKUP !== 'false',
         // Relative paths (e.g. ./data) are resolved from the project root, not the working directory
         asnDataDir: resolve(ROOT_DIR, env.ASN_DATA_DIR || 'data'),
@@ -58,6 +71,9 @@ export function loadConfig(env = process.env, log) {
     if (!/^\d+\.\d{8}\.\d{2}\.\d{2}$/.test(config.innertubeClientVersion)) {
         log.warn('INNERTUBE_CLIENT_VERSION does not look like a WEB client version (e.g. 2.20261116.00.00)',
             {value: config.innertubeClientVersion});
+    }
+    if (config.postgres && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(config.postgres.schema)) {
+        throw new Error(`PG_SCHEMA "${config.postgres.schema}" must be a plain schema name (letters, digits, underscores)`);
     }
     if (!config.apiV3Key) {
         log.warn('API_V3_KEY is not set, /v3 requests will fail');
