@@ -111,14 +111,14 @@
                 <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
                     <select aria-label="Scope" class="form-select form-select-sm w-auto" id="consumerScope">
                         <option value="ip">Single IP</option>
-                        <option value="block">IP block (/24)</option>
+                        <option value="block">/24 block</option>
                         <option value="asn">Network (ASN)</option>
                     </select>
                     <select aria-label="Metric" class="form-select form-select-sm w-auto" id="consumerMetric">
+                        <option value="requests">Requests</option>
                         <option value="units">Quota units</option>
                         <option value="search">Search calls</option>
-                        <option value="requests">Requests</option>
-                        <option value="blocked">Blocked requests</option>
+                        <option value="blocked">Limited requests</option>
                         <option value="scripted">Likely scripts</option>
                     </select>
                     <input aria-label="Filter" class="form-control form-control-sm w-auto" id="consumerFilter"
@@ -129,10 +129,10 @@
             </div>
 
             <div class="tab-pane fade" id="tab-distinct" role="tabpanel">
-                <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
+                <div class="d-flex flex-wrap gap-2 mb-2 align-items-center" id="distinctControls">
                     <select aria-label="Scope" class="form-select form-select-sm w-auto" id="distinctScope">
                         <option value="ip">Single IP</option>
-                        <option value="block">IP block (/24)</option>
+                        <option value="block">/24 block</option>
                     </select>
                     <input aria-label="Filter" class="form-control form-control-sm w-auto" id="distinctFilter"
                            placeholder="Filter by IP, block or network" style="min-width: 15rem" type="search">
@@ -169,7 +169,7 @@
                 <form autocomplete="off" class="d-flex flex-wrap gap-2 mb-3 align-items-center" id="blocklistForm">
                     <select aria-label="Kind" class="form-select form-select-sm w-auto" id="blockKind">
                         <option value="ip">IP</option>
-                        <option value="block">Block (/24)</option>
+                        <option value="block">/24 block</option>
                         <option value="asn">Network (ASN)</option>
                     </select>
                     <input aria-label="Value" class="form-control form-control-sm w-auto" id="blockValue"
@@ -214,7 +214,7 @@
 <div class="viz-tooltip" hidden id="tooltip" role="status"></div>
 
 <div aria-hidden="true" aria-labelledby="blockModalTitle" class="modal fade" id="blockModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <form class="modal-content" id="blockModalForm">
             <div class="modal-header">
                 <h2 class="modal-title h6" id="blockModalTitle">Block</h2>
@@ -240,7 +240,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal" type="button">Cancel</button>
-                <button class="btn btn-sm btn-danger" type="submit">Block</button>
+                <button class="btn btn-sm btn-danger" type="submit">Add to blocklist</button>
             </div>
         </form>
     </div>

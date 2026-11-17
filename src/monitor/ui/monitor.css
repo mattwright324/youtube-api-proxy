@@ -1,5 +1,6 @@
-/* Chart and page tokens (dark mode, validated against the #1a1a19 chart surface) */
-.viz {
+/* Chart and page tokens (dark mode, validated against the #1a1a19 chart surface).
+   Defined on :root so Bootstrap's variables below (also on the root element) can use them. */
+:root {
     --surface-1: #1a1a19;
     --page: #0d0d0d;
     --text-primary: #f0efec;
@@ -23,6 +24,12 @@
     --bs-secondary-color: var(--text-secondary);
     --bs-body-font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     --bs-border-color: var(--hairline);
+}
+
+/* Bootstrap sets its modal variables on .modal itself, so they're overridden here rather than on :root */
+.modal {
+    --bs-modal-bg: var(--surface-1);
+    --bs-modal-border-color: var(--hairline);
 }
 
 .navbar {
@@ -285,4 +292,14 @@ td.detail {
 .badge.status-critical {
     background: var(--status-critical);
     color: #ffffff;
+}
+
+/* Placeholder text muted so it doesn't read like an entered value */
+.form-control::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+}
+
+td.nowrap {
+    white-space: nowrap;
 }

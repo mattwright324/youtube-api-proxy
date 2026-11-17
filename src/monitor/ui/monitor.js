@@ -25,7 +25,7 @@
         requests: 'Requests',
         units: 'Quota units',
         search: 'Search calls',
-        blocked: 'Blocked requests',
+        blocked: 'Limited requests',
         served: 'Served requests',
         scripted: 'Likely scripts'
     };
@@ -36,6 +36,9 @@
         'no-sec-fetch': ['No Sec-Fetch headers', 'Sent automatically by current browsers, page scripts cannot set them'],
         'missing-params': ['Missing expected parameters', '/v3 request without one of SCRIPT_EXPECTED_PARAMS'],
     };
+    const KIND_LABELS = {ip: 'IP', block: '/24 block', asn: 'Network'};
+    // For use inside a sentence ("Add this IP to the blocklist")
+    const KIND_NOUNS = {ip: 'IP', block: '/24 block', asn: 'network'};
     const REASON_LABELS = {
         requests: 'Request rate',
         units: 'Quota units',
@@ -44,14 +47,14 @@
     };
     const SERIES = [
         {key: 'requests', label: 'Requests'},
-        {key: 'blocked', label: 'Blocked requests'},
+        {key: 'blocked', label: 'Limited requests'},
         {key: 'scripted', label: 'Likely scripts'},
         {key: 'cacheHits', label: 'Cache hits'},
         {key: 'upstream', label: 'Upstream calls'},
         {key: 'units', label: 'Quota units'},
         {key: 'search', label: 'Search calls'},
     ];
-    // Shown in the tooltip and table but not charted: served is requests minus blocked
+    // Shown in the tooltip and table but not charted: served is requests minus limited
     const EXTRA_FIELDS = [
         {key: 'served', label: 'Served requests'},
         {key: 'errors', label: 'Upstream errors'},
@@ -146,6 +149,7 @@
                 scope: 'col',
                 class: [column.num && 'num', sortable && 'sortable'].filter(Boolean).join(' '),
                 'aria-sort': active ? (state.dir === 'asc' ? 'ascending' : 'descending') : null,
+                'aria-label': column.ariaLabel || null,
             }, column.label, active ? (state.dir === 'asc' ? ' ▲' : ' ▼') : '');
             if (sortable) {
                 th.addEventListener('click', () => {
@@ -195,7 +199,7 @@
         $('badges').replaceChildren(...[
             data.dryRun ? h('span', {
                 class: 'badge status-warning',
-                title: 'Limits only log, nothing is blocked'
+                title: 'Limits only log, nothing is limited'
             }, '⚠ Dry run') : null,
             h('span', {class: 'badge text-bg-secondary'}, `Up ${uptime(data.startedAt, data.now)}`),
             h('span', {
@@ -251,13 +255,13 @@
         const hitRate = cache.hits + cache.misses ? cache.hits / (cache.hits + cache.misses) : null;
 
         $('tiles').replaceChildren(
-            tile('Requests today', cf.format(total), `${fmt(served)} served, ${fmt(blocked)} blocked`),
+            tile('Requests today', cf.format(total), `${fmt(served)} served, ${fmt(blocked)} limited`),
             tile('Quota units today', cf.format(g.units?.day ?? 0), limits.units?.day ? `of ${cf.format(limits.units.day)} limit` : 'no daily limit'),
             tile('Search calls today', cf.format(g.search?.day ?? 0), limits.search?.day ? `of ${cf.format(limits.search.day)} limit` : 'no daily limit'),
-            tile('Blocked today', cf.format(blocked), `${total ? pf.format(blocked / total) : '0%'} of requests`),
+            tile('Limited today', cf.format(blocked), `${total ? pf.format(blocked / total) : '0%'} of requests`),
             tile('Cache hit rate', hitRate == null ? '—' : pf.format(hitRate), `${fmt(cache.keys)} cached entries`),
             tile('Likely scripts today', cf.format(scripted), `${total ? pf.format(scripted / total) : '0%'} of requests`),
-            data.blocklist ? tile('Blocklisted today', cf.format(data.deniedCount || 0), `${fmt(data.blocklist.length)} blocklist entries`) : null,
+            data.blocklist ? tile('Blocklisted today', cf.format(data.deniedCount || 0), `${fmt(data.blocklist.length)} blocklist ${data.blocklist.length === 1 ? 'entry' : 'entries'}`) : null,
         );
     }
 
@@ -552,12 +556,12 @@
                 {key: 'minute', label: 'Last minute', num: true, format: fmt},
                 {key: 'day', label: 'Today', num: true, format: fmt},
                 {key: 'servedDay', label: 'Served today', num: true, format: fmt},
-                {key: 'blockedDay', label: 'Blocked today', num: true, format: fmt},
+                {key: 'blockedDay', label: 'Limited today', num: true, format: fmt},
                 {key: 'scriptedDay', label: 'Script-like today', num: true, format: fmt},
             ]
             : [
                 blockColumn(() => scope),
-                {key: 'id', label: scope === 'ip' ? 'IP' : 'Block', render: row => h('code', {}, row.id)},
+                {key: 'id', label: scope === 'ip' ? 'IP' : '/24 block', render: row => h('code', {}, row.id)},
                 networkColumn(),
                 {key: 'minute', label: 'Last minute', num: true, format: fmt},
                 {
@@ -576,9 +580,9 @@
                     sortValue: row => row.dayPct ?? -1
                 },
                 {key: 'servedDay', label: 'Served today', num: true, format: fmt},
-                {key: 'blockedDay', label: 'Blocked today', num: true, format: fmt},
+                {key: 'blockedDay', label: 'Limited today', num: true, format: fmt},
                 {key: 'scriptedDay', label: 'Script-like today', num: true, format: fmt},
-            ];
+            ].filter(column => (column.key !== 'minutePct' || limit.minute) && (column.key !== 'dayPct' || limit.day));
         renderTable($('consumerTable'), `consumers-${scope}-${metric}`, columns, rows, {
             defaultSort: {
                 key: 'day',
@@ -589,6 +593,7 @@
 
     function renderDistinct() {
         const info = $('distinctInfo');
+        $('distinctControls').classList.toggle('d-none', !data.distinct);
         if (!data.distinct) {
             info.textContent = '';
             $('distinctTable').replaceChildren(h('p', {class: 'text-secondary mb-0'},
@@ -606,7 +611,7 @@
 
         renderTable($('distinctTable'), `distinct-${scope}`, [
             blockColumn(() => scope),
-            {key: 'id', label: scope === 'ip' ? 'IP' : 'Block', render: row => h('code', {}, row.id)},
+            {key: 'id', label: scope === 'ip' ? 'IP' : '/24 block', render: row => h('code', {}, row.id)},
             networkColumn(),
             {key: 'distinct', label: 'Distinct values', num: true, format: fmt},
             {key: 'requests', label: 'Requests', num: true, format: fmt},
@@ -630,13 +635,13 @@
         $('eventCount').textContent = data.events.length ? String(data.events.length) : '';
         const reasons = Object.entries(data.blockedReasons || {}).sort((a, b) => b[1] - a[1]);
         $('blockedReasons').textContent = reasons.length
-            ? `Blocked requests today by limit: ${reasons.map(([reason, count]) => `${REASON_LABELS[reason] || reason} ${fmt(count)}`).join(', ')}`
-            : 'No requests blocked today.';
+            ? `Limited requests today by limit: ${reasons.map(([reason, count]) => `${REASON_LABELS[reason] || reason} ${fmt(count)}`).join(', ')}`
+            : 'No requests limited today.';
         renderTable($('eventTable'), 'events', [
             blockColumn(row => (row.scope === 'ip' || row.scope === 'block' ? row.scope : null)),
-            {key: 'time', label: 'Time', format: v => dateTime(v)},
+            {key: 'time', label: 'Time', class: 'nowrap', format: v => dateTime(v)},
             {key: 'scope', label: 'Scope'},
-            {key: 'id', label: 'IP / block', render: row => h('code', {}, row.id)},
+            {key: 'id', label: 'IP or /24 block', render: row => h('code', {}, row.id)},
             networkColumn(),
             {
                 key: 'metric',
@@ -660,16 +665,16 @@
 
     const isBlocked = (kind, value) => Boolean(data.blocklist?.some(entry => entry.kind === kind && entry.value === value));
 
-    /** First table column: a Block button, or a Blocked badge. kindOf(row) gives 'ip', 'block', 'asn' or null. */
+    /** First table column: a Block button (adds to the blocklist), or a Blocklisted badge. kindOf(row) gives 'ip', 'block', 'asn' or null. */
     function blockColumn(kindOf) {
         return {
-            key: 'blockAction', label: '', sortable: false,
+            key: 'blockAction', label: '', ariaLabel: 'Blocklist', sortable: false,
             render: row => {
                 const kind = kindOf(row);
                 if (!data.blocklist || !kind || row.id === 'unknown') return '';
-                if (isBlocked(kind, row.id)) return h('span', {class: 'badge status-critical', title: 'On the blocklist'}, '✖ Blocked');
+                if (isBlocked(kind, row.id)) return h('span', {class: 'badge status-critical', title: 'On the blocklist: all requests are rejected'}, '✖ Blocklisted');
                 return h('button', {
-                    class: 'btn btn-sm btn-outline-danger py-0', type: 'button', title: `Block this ${kind === 'asn' ? 'network' : kind}`,
+                    class: 'btn btn-sm btn-outline-danger py-0', type: 'button', title: `Add this ${KIND_NOUNS[kind]} to the blocklist`,
                     onclick: () => openBlockModal(kind, row.id, row.network),
                 }, 'Block');
             },
@@ -692,8 +697,7 @@
     let pendingBlock = null;
     function openBlockModal(kind, value, network) {
         pendingBlock = {kind, value};
-        const kindLabel = {ip: 'IP', block: 'block', asn: 'network'}[kind];
-        $('blockModalTitle').textContent = `Block this ${kindLabel}`;
+        $('blockModalTitle').textContent = `Add this ${KIND_NOUNS[kind]} to the blocklist`;
         $('blockModalValue').textContent = value;
         $('blockModalNetwork').textContent = network ? networkText(network) : '';
         $('blockModalNote').value = '';
@@ -741,7 +745,9 @@
             await blocklistRequest('DELETE', `api/blocklist/${entry.id}`);
             load();
         } catch (e) {
-            alert(`Could not remove: ${e.message}`);
+            const status = $('blocklistFormStatus');
+            status.className = 'small text-danger';
+            status.textContent = `Could not remove ${entry.value}: ${e.message}`;
         }
     }
 
@@ -754,19 +760,19 @@
             $('blocklistTable').replaceChildren(h('p', {class: 'text-secondary mb-0'}, 'The blocklist needs Postgres. Set PG_HOST and the other PG_ settings.'));
             return;
         }
-        $('blocklistInfo').textContent = `Requests from these are rejected with the quota error before any limits, and counted only here `
-            + `(${fmt(data.deniedCount || 0)} today). Entries with no recent hits may no longer be needed.`;
-        const kindLabels = {ip: 'IP', block: 'Block', asn: 'Network'};
+        $('blocklistInfo').textContent = `Every request from these is rejected with the quota error until the entry is removed or expires. `
+            + `Unlike limits, which apply automatically and clear on their own, entries are added by hand. Blocklisted requests `
+            + `are counted only here (${fmt(data.deniedCount || 0)} today), not in the other statistics. Entries with no recent hits may no longer be needed.`;
         renderTable($('blocklistTable'), 'blocklist', [
-            {key: 'kind', label: 'Kind', format: v => kindLabels[v] || v},
+            {key: 'kind', label: 'Kind', format: v => KIND_LABELS[v] || v},
             {key: 'value', label: 'Value', render: row => h('code', {}, row.value)},
             networkColumn({showAsn: true}),
             {key: 'note', label: 'Note', class: 'detail', render: row => h('span', {title: row.note}, row.note || '')},
-            {key: 'createdAt', label: 'Added', format: v => dateTime(v)},
-            {key: 'expiresAt', label: 'Expires', sortValue: row => row.expiresAt ?? Infinity, render: row => (row.expiresAt ? dateTime(row.expiresAt) : 'Permanent')},
+            {key: 'createdAt', label: 'Added', class: 'nowrap', format: v => dateTime(v)},
+            {key: 'expiresAt', label: 'Expires', class: 'nowrap', sortValue: row => row.expiresAt ?? Infinity, render: row => (row.expiresAt ? dateTime(row.expiresAt) : 'Permanent')},
             {key: 'hitsToday', label: 'Hits today', num: true, format: fmt},
             {key: 'hitsTotal', label: 'Hits total', num: true, format: fmt},
-            {key: 'lastHit', label: 'Last hit', sortValue: row => row.lastHit ?? 0, render: row => (row.lastHit ? dateTime(row.lastHit) : 'Never')},
+            {key: 'lastHit', label: 'Last hit', class: 'nowrap', sortValue: row => row.lastHit ?? 0, render: row => (row.lastHit ? dateTime(row.lastHit) : 'Never')},
             {key: 'remove', label: '', sortable: false, render: row => h('button', {class: 'btn btn-sm btn-outline-secondary py-0', type: 'button', onclick: () => removeBlock(row)}, 'Remove')},
         ], entries, {defaultSort: {key: 'createdAt', dir: 'desc'}, emptyText: 'No entries. Use the Block buttons in the other tables, or add one above.'});
     }
@@ -774,7 +780,7 @@
     function renderScripts() {
         const settings = data.scriptSignals || {};
         const expected = settings.expectedParams?.length ? settings.expectedParams.join(', ') : 'off (SCRIPT_EXPECTED_PARAMS not set)';
-        $('scriptInfo').textContent = `Visibility only, nothing is blocked. A request with any signal counts as a likely script. `
+        $('scriptInfo').textContent = `For visibility only: these signals never limit or blocklist a request. A request with any signal counts as a likely script. `
             + `Expected /v3 parameters: ${expected}. Extra user agent patterns: ${settings.extraUaPatterns?.length || 0}.`;
 
         const requests = data.requestCount || 0;
@@ -845,7 +851,7 @@
         ], errors, {defaultSort: {key: 'count', dir: 'desc'}, emptyText: 'No upstream errors today.'});
 
         renderTable($('recentErrorTable'), 'recentErrors', [
-            {key: 'time', label: 'Time', format: v => dateTime(v)},
+            {key: 'time', label: 'Time', class: 'nowrap', format: v => dateTime(v)},
             {key: 'endpoint', label: 'Endpoint', render: row => h('code', {}, row.endpoint)},
             {key: 'status', label: 'Status', num: true},
             {key: 'reason', label: 'Reason', format: v => v || '—'},
@@ -943,6 +949,7 @@
 
     $('autoRefresh').addEventListener('change', schedule);
     $('blockModalForm').addEventListener('submit', submitBlock);
+    $('blockModal').addEventListener('shown.bs.modal', () => $('blockModalNote').focus());
     $('blocklistForm').addEventListener('submit', submitBlocklistForm);
     for (const button of document.querySelectorAll('[data-range]')) {
         button.addEventListener('click', () => setRange(button.dataset.range));
