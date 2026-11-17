@@ -17,7 +17,6 @@ import {createStats} from './stats.mjs';
 
 const log = loggerFromEnv();
 
-// Crashes are logged through the logger before exiting (Node's default would be an unformatted stack dump)
 process.on('uncaughtException', error => {
     log.error('uncaught exception, exiting', {error});
     process.exit(1);
@@ -31,7 +30,6 @@ let config;
 try {
     config = loadConfig(process.env, log);
 } catch (error) {
-    // A configuration mistake gets a one-line message, not a crash stack trace
     log.error('invalid configuration, exiting', {error: error.message});
     process.exit(1);
 }
@@ -61,9 +59,6 @@ log.info('config', {
 });
 log.info('limits', {limits: config.limits});
 
-// ---------------------------------------------------------------------------
-// Services
-// ---------------------------------------------------------------------------
 
 const stats = createStats();
 const limiter = createLimiter({limits: config.limits, dryRun: config.limitDryRun, onLimit: stats.recordEvent, log});
@@ -74,18 +69,15 @@ const distinctTracker = config.distinctParam ? createDistinctTracker({
     onLimit: stats.recordEvent,
     log,
 }) : null;
-// Network (ASN) lookups, shown on the monitor and tracked per network. Not used for limiting.
 const asnDb = config.asnLookup ? createAsnDatabase({dataDir: config.asnDataDir, log}) : null;
 asnDb?.start();
 const proxy = createProxy({cacheTtlSec: config.cacheTtlSec, limiter, stats, log});
-// Saves state to Postgres periodically and restores it at startup (when PG_HOST is set). Memory stays the live state.
 // The blocklist is stored in Postgres, so it's only available with persistence
 const blocklist = config.postgres ? createBlocklist() : null;
 const persistence = config.postgres
     ? createPersistence({...config.postgres, limiter, distinctTracker, stats, blocklist, log})
     : null;
 
-// Blocklist actions for the monitor page
 const blocklistApi = persistence && {
     list: () => blocklist.list().map(entry => ({...entry, network: asnDb?.describe(entry.value) ?? null})),
     async add({kind, value, note, expiry}) {
@@ -99,22 +91,17 @@ const blocklistApi = persistence && {
     },
     remove: id => persistence.removeBlock(id),
 };
-// Flags likely script (non-browser) requests for the monitor. Visibility only, nothing is blocked.
 const scriptDetector = createScriptDetector({
     corsWhitelist: config.corsWhitelist,
     expectedParams: config.scriptExpectedParams,
     extraUaPatterns: config.scriptUaPatterns,
 });
 
-// Drop idle limiter entries and previous days' distinct-value entries so memory doesn't grow over time
 setInterval(() => {
     limiter.prune();
     distinctTracker?.prune();
 }, 60 * 1000).unref();
 
-// ---------------------------------------------------------------------------
-// App
-// ---------------------------------------------------------------------------
 
 const app = express();
 app.set('trust proxy', 1);
@@ -125,12 +112,13 @@ app.options('*', cors());
 app.use(express.static(join(ROOT_DIR, 'public')));
 app.use('/vendor/bootstrap', express.static(join(ROOT_DIR, 'node_modules/bootstrap/dist')));
 
+const monitorSources = {config, limiter, distinctTracker, stats, proxy, asnDb, scriptDetector, persistence, blocklistApi};
 if (config.monitorEnabled) {
     // Mounted before the usage limits so viewing it doesn't count against your own IP
     app.use(config.monitorPath, createMonitorRouter({
         user: config.monitorUser,
         password: config.monitorPassword,
-        getStats: n => buildMonitorStats({config, limiter, distinctTracker, stats, proxy, asnDb, scriptDetector, persistence, blocklistApi}, n),
+        getStats: n => buildMonitorStats(monitorSources, n),
         blocklistApi,
         getHistory: persistence ? days => persistence.history(days) : null,
         log,
@@ -151,7 +139,7 @@ app.use((req, res, next) => {
 
     stats.recordRequest();
 
-    // Classified before the limits so blocked requests are counted too
+    // Classified before the limits so limited requests are counted too
     const signals = scriptDetector.classify(req);
     stats.recordClient(req.get('user-agent'), signals);
     if (signals.length) {
@@ -165,7 +153,7 @@ app.use((req, res, next) => {
     if (limiter.consume(req.subject, 'requests', 1)) {
         return proxy.sendQuotaExceeded(req, res, 'requests');
     }
-    // Counted as served once the response finishes without being blocked further along (e.g. quota limits)
+    // Counted as served once the response finishes without being limited further along (e.g. quota limits)
     res.on('finish', () => {
         if (!res.locals.blocked) {
             stats.recordServed();
@@ -199,7 +187,6 @@ app.use((error, req, res, next) => {
         log.error('unhandled error', {url: req.originalUrl, ip: req.subject?.ip ?? req.ip, error});
         return res.status(500).send({message: 'A problem occurred'});
     }
-    // e.g. 400 for a malformed URL encoding
     log.warn('bad request', {status, url: req.originalUrl, ip: req.subject?.ip ?? req.ip, error: error.message});
     res.status(status).send({message: 'Bad request'});
 });
@@ -217,7 +204,6 @@ const SHUTDOWN_TIMEOUT_MS = 10 * 1000;
 function shutdown(signal) {
     log.info('shutting down', {signal});
     server.close(async () => {
-        // Final save once requests have finished, so a redeploy doesn't lose the last interval
         await persistence?.stop();
         log.info('stopped');
         process.exit(0);

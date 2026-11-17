@@ -2,7 +2,7 @@ import {pacificDay} from './limits.mjs';
 
 const MINUTE_MS = 60 * 1000;
 
-// requests = served + blocked. denied (blocklisted) requests are counted separately and are not part of requests.
+// requests = served + blocked (rejected by a limit). denied (blocklisted) requests are counted separately, not as requests.
 export const HISTORY_FIELDS = ['requests', 'served', 'blocked', 'scripted', 'cacheHits', 'upstream', 'units', 'search', 'errors', 'denied'];
 
 const MAX_USER_AGENTS = 500;
@@ -140,7 +140,7 @@ export function createStats({historyMinutes = 24 * 60, maxEvents = 300, maxError
         recordServed() {
             bucket().served += 1;
         },
-        /** reason: which limit blocked it, e.g. 'requests', 'units', 'search', 'distinct'. */
+        /** A request rejected by a limit; reason: 'requests', 'units', 'search' or 'distinct'. */
         recordBlocked(reason) {
             bucket().blocked += 1;
             increment(today().blockedReasons, reason);

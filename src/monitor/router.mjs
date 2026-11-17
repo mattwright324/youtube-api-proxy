@@ -46,8 +46,8 @@ export function buildMonitorStats({
         network: asnDb.describe(row.id)
     }));
 
-    const limiterStats = limiter.snapshot(now, n, true);
-    // Each row also gets today's served and blocked counts for that key
+    const limiterStats = limiter.snapshot(now, n);
+    // Each row also gets today's served, limited and script-like counts for that key
     for (const [scopeName, scope] of Object.entries(limiterStats.top)) {
         for (const metric of Object.keys(scope)) {
             scope[metric] = withNetwork(scope[metric]).map(row => ({
@@ -58,7 +58,7 @@ export function buildMonitorStats({
             }));
         }
     }
-    const distinctTop = distinctTracker?.snapshot(now, n, true);
+    const distinctTop = distinctTracker?.snapshot(now, n);
     const usage = stats.snapshot(now);
     return {
         now,
@@ -82,9 +82,6 @@ export function buildMonitorStats({
 }
 
 /**
- * getStats(n) must return the JSON-serializable data shown on the page, with top lists of up to n rows.
- */
-/**
  * Changes (blocklist add/remove) are only accepted from the monitor page itself. Browsers send saved basic auth
  * credentials automatically, so without this another site could trigger them for a logged-in user.
  */
@@ -107,6 +104,7 @@ function sameOriginOnly(log) {
 }
 
 /**
+ * getStats(n): the data shown on the page, with top lists of up to n rows.
  * getHistory(days), optional: longer per-interval history (from Postgres) for the charts.
  * blocklistApi, optional: {list, add, remove} for managing the blocklist (needs Postgres).
  */

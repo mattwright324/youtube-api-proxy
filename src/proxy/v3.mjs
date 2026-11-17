@@ -29,7 +29,6 @@ const KEY_REASONS = new Set(['quotaExceeded', 'dailyLimitExceeded', 'keyInvalid'
 const KEY_DETAIL_REASONS = /^(API_KEY_\w+|SERVICE_DISABLED|CONSUMER_INVALID)$/;
 const KEY_PROBLEM_LOG_INTERVAL_MS = 60 * 1000;
 
-/** Router to mount at /v3. */
 export function createV3Router({proxy, apiKey, allowedPaths, allowedParams, upstreamTimeoutMs, log = createLogger()}) {
     const router = express.Router();
     const allowAllPaths = allowedPaths.includes('*');
@@ -73,7 +72,7 @@ export function createV3Router({proxy, apiKey, allowedPaths, allowedParams, upst
             fetchUpstream: async () => {
                 // https://cloud.google.com/apis/docs/capping-api-usage details on quotaUser attribute
                 if (!req.ip) {
-                    // This shouldn't happen but defaulting value just in case
+                    // Behind the reverse proxy req.ip is always set; without it every request shares the 'unknown' quotaUser
                     log.warn('client ip unknown', {url: req.originalUrl});
                 }
                 const params = new URLSearchParams({...query, key: apiKey, quotaUser: req.subject.ip});

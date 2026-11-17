@@ -1,5 +1,3 @@
-// Response cache shared by the proxy routes, plus the response sent when a usage limit blocks a request.
-
 import NodeCache from 'node-cache';
 import {createLogger} from '../log.mjs';
 
@@ -24,24 +22,23 @@ function isCacheable(status) {
 export function createProxy({cacheTtlSec, limiter, stats, log = createLogger()}) {
     const requestCache = new NodeCache({stdTTL: cacheTtlSec, checkperiod: 5});
 
-    /**
-     * Sends the quota error for a blocked request. reason is the limit that blocked it:
-     * 'requests', 'units', 'search' or 'distinct'.
-     * Paced like a recent upstream round trip, so clients retrying in a tight loop don't get an instant answer each time.
-     */
-    function sendQuotaExceeded(req, res, reason) {
+    // Paced like a recent upstream round trip, so clients retrying in a tight loop don't get an instant answer each time
+    function sendPacedQuotaError(res) {
         res.locals.blocked = true;
-        stats.recordBlocked(reason);
-        limiter.record(req.subject, 'blocked');
         const delay = stats.sampleLatency() ?? 100 + Math.random() * 150;
         setTimeout(() => res.status(403).send(QUOTA_EXCEEDED), delay);
     }
 
-    /** Same response and pacing for a blocklisted request, without counting it as a request or a limit block. */
+    /** The quota error for a request rejected by a limit; reason: 'requests', 'units', 'search' or 'distinct'. */
+    function sendQuotaExceeded(req, res, reason) {
+        stats.recordBlocked(reason);
+        limiter.record(req.subject, 'blocked');
+        sendPacedQuotaError(res);
+    }
+
+    /** The same response for a blocklisted request, which isn't counted as a request or a limit. */
     function sendDenied(res) {
-        res.locals.blocked = true;
-        const delay = stats.sampleLatency() ?? 100 + Math.random() * 150;
-        setTimeout(() => res.status(403).send(QUOTA_EXCEEDED), delay);
+        sendPacedQuotaError(res);
     }
 
     function sendError(req, res, endpoint, e) {

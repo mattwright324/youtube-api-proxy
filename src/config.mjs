@@ -18,7 +18,6 @@ function requireList(env, name) {
     return value.split(',');
 }
 
-/** log: a logger from log.mjs, used for configuration warnings. */
 export function loadConfig(env = process.env, log) {
     const config = {
         port: env.PORT === undefined || env.PORT === '' ? 3000 : Number(env.PORT),
@@ -79,13 +78,8 @@ export function loadConfig(env = process.env, log) {
     if (!config.apiV3Key) {
         log.warn('API_V3_KEY is not set, /v3 requests will fail');
     }
-    // Legacy settings from before express-rate-limit was replaced
-    if (env.LIMIT_COUNT && !env.LIMIT_IP_REQUESTS_MINUTE) {
-        config.limits.ip ??= {};
-        config.limits.ip.requests = {...config.limits.ip.requests, minute: Number(env.LIMIT_COUNT)};
-    }
-    if (env.LIMIT_WINDOW_MS) {
-        log.warn('LIMIT_WINDOW_MS is no longer used, limits now use fixed minute and day windows');
+    for (const name of ['LIMIT_COUNT', 'LIMIT_WINDOW_MS']) {
+        if (env[name]) log.warn(`${name} is no longer used, see the LIMIT_<SCOPE>_<METRIC>_<WINDOW> settings in .env.template`);
     }
     return config;
 }

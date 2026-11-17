@@ -128,7 +128,6 @@ export function createAsnDatabase({dataDir, refreshHours = 24, autoRefresh = tru
         return null;
     }
 
-    /** {name, country} for an AS number. */
     function network(asn) {
         return table?.networks.get(asn) || null;
     }

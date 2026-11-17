@@ -62,6 +62,8 @@
     ];
 
     const $ = id => document.getElementById(id);
+    // Built from origin + path so credentials in the page URL (user:pass@host) aren't carried into fetch, which rejects them
+    const apiUrl = path => new URL(path, location.origin + location.pathname);
     let data = null;
     let timer = null;
     const tableState = {};
@@ -349,8 +351,7 @@
     }
 
     async function loadLongHistory() {
-        const url = new URL('api/history', location.origin + location.pathname);
-        const response = await fetch(url, {cache: 'no-store'});
+        const response = await fetch(apiUrl('api/history'), {cache: 'no-store'});
         if (!response.ok) throw new Error(`history HTTP ${response.status}`);
         longHistory = await response.json();
     }
@@ -423,7 +424,6 @@
         maxLabel.textContent = nf.format(max);
         plot.append(maxLabel);
 
-        // Time ticks
         for (const fraction of [0, 0.25, 0.5, 0.75, 1]) {
             const label = svg('text', {
                 class: 'tick', x: left + fraction * plotW, y: height - 4,
@@ -683,8 +683,7 @@
 
     /** Sends a blocklist change. The custom header marks it as coming from this page (checked by the server). */
     async function blocklistRequest(method, path, body) {
-        const url = new URL(path, location.origin + location.pathname);
-        const response = await fetch(url, {
+        const response = await fetch(apiUrl(path), {
             method,
             headers: {'Content-Type': 'application/json', 'X-Monitor-Request': '1'},
             body: body ? JSON.stringify(body) : undefined,
@@ -911,9 +910,7 @@
         clearTimeout(timer);
         document.body.classList.add('refreshing');
         try {
-            // Built from origin + path so credentials in the page URL (user:pass@host) aren't carried into fetch, which rejects them
-            const url = new URL(`api/stats?n=${TOP_N}`, location.origin + location.pathname);
-            const response = await fetch(url, {cache: 'no-store'});
+            const response = await fetch(apiUrl(`api/stats?n=${TOP_N}`), {cache: 'no-store'});
             if (response.status === 401) {
                 location.reload();
                 return;

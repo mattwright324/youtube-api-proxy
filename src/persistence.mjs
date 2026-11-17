@@ -10,8 +10,8 @@ import {pacificDay} from './limits.mjs';
 import {HISTORY_FIELDS} from './stats.mjs';
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const MINUTE_COLUMNS = ['requests', 'served', 'blocked', 'scripted', 'cache_hits', 'upstream', 'units', 'search', 'errors', 'denied'];
 const toColumn = field => field.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
+const MINUTE_COLUMNS = HISTORY_FIELDS.map(toColumn);
 const HOUR_MS = 60 * 60 * 1000;
 
 const BLOCKLIST_COLUMNS = `id, kind, value, note, created_at, expires_at, hits_total, hits_today, hits_day::text AS hits_day, last_hit`;
@@ -37,11 +37,12 @@ export function createPersistence({
     const pool = new pg.Pool({...connection, max: 3, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000});
     pool.on('error', error => log.warn('postgres connection error', {error: error.message}));
 
-    const status = {enabled: true, schema, ready: false, restored: null, lastSave: null, lastSaveMs: null, lastError: null};
+    const status = {schema, ready: false, restored: null, lastSave: null, lastSaveMs: null, lastError: null};
     let timer = null;
     let lastRetention = 0;
+    const emptyBatch = () => ({usage: [], distinct: [], minutes: [], events: [], counters: [], blockHits: []});
     // Changes from a failed save, retried with the next one
-    let retry = {usage: [], distinct: [], minutes: [], events: [], counters: [], blockHits: []};
+    let retry = emptyBatch();
 
     async function migrate() {
         await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
@@ -67,8 +68,6 @@ export function createPersistence({
                 note text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz,
                 hits_total bigint NOT NULL DEFAULT 0, hits_today bigint NOT NULL DEFAULT 0, hits_day date, last_hit timestamptz,
                 UNIQUE (kind, value));
-            -- Columns added after the first release
-            ALTER TABLE ${table('minutes')} ADD COLUMN IF NOT EXISTS denied bigint NOT NULL DEFAULT 0;
         `);
     }
 
@@ -112,7 +111,7 @@ export function createPersistence({
         const exported = stats.exportChanges(now);
         const batch = {
             usage: merge(retry.usage, limiter.exportChanges(now), r => `${r.day}|${r.scope}|${r.id}|${r.metric}`),
-            distinct: merge(retry.distinct, distinctTracker?.exportChanges(now) ?? [], r => `${r.day}|${r.scope}|${r.id}`),
+            distinct: merge(retry.distinct, distinctTracker?.exportChanges() ?? [], r => `${r.day}|${r.scope}|${r.id}`),
             minutes: merge(retry.minutes, exported.minutes, r => r.t),
             events: [...retry.events, ...exported.events],
             counters: merge(retry.counters, exported.counters, r => `${r.day}|${r.kind}|${r.key}`),
@@ -147,7 +146,7 @@ export function createPersistence({
                     FROM unnest($1::bigint[], ${MINUTE_COLUMNS.map((c, i) => `$${i + 2}::bigint[]`).join(', ')})
                         AS x(t, ${MINUTE_COLUMNS.join(', ')})
                     ON CONFLICT (t) DO UPDATE SET ${MINUTE_COLUMNS.map(c => `${c} = GREATEST(m.${c}, EXCLUDED.${c})`).join(', ')}`,
-                [batch.minutes.map(m => m.t), ...HISTORY_FIELDS.map(field => batch.minutes.map(m => m[field]))]);
+                        [batch.minutes.map(m => m.t), ...HISTORY_FIELDS.map(field => batch.minutes.map(m => m[field]))]);
             }
             if (batch.events.length) {
                 await client.query(`
@@ -179,7 +178,7 @@ export function createPersistence({
                 ['id', 'hitsTotal', 'hitsToday', 'hitsDay', 'lastHit'].map(k => batch.blockHits.map(r => r[k])));
             }
             await client.query('COMMIT');
-            retry = {usage: [], distinct: [], minutes: [], events: [], counters: [], blockHits: []};
+            retry = emptyBatch();
             status.lastSave = new Date(now).toISOString();
             status.lastSaveMs = Date.now() - started;
             status.lastError = null;
@@ -305,7 +304,7 @@ export function createPersistence({
             blocklist.add(entry);
             return entry;
         },
-        /** Removes a blocklist entry; returns whether it existed. */
+        /** Removes a blocklist entry; returns its {kind, value}, or null if there was no such entry. */
         async removeBlock(id) {
             if (!blocklist) throw new Error('Blocklist not enabled');
             const {rows} = await pool.query(`DELETE FROM ${table('blocklist')} WHERE id = $1 RETURNING kind, value`, [id]);

@@ -25,7 +25,6 @@ const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 // Parts of the player response passed on to clients; tracking, ad and framework fields are dropped
 const PLAYER_FIELDS = ['playabilityStatus', 'videoDetails', 'microformat', 'captions'];
 
-/** Router to mount at /v1. */
 export function createV1Router({
                                    proxy,
                                    upstreamTimeoutMs,
